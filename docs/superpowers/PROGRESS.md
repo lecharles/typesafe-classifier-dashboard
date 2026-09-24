@@ -26,14 +26,22 @@ Playground, Email triage, YouTube analyzer.
 - [x] Task 5: `app/api/classify/route.ts` (POST endpoint)
 - 10 unit tests passing (`npm test`).
 
-## Next up ⏭ (follow the plan)
-- [ ] Task 6: Chart components — `components/charts/{Donut,Histogram,Gauge,StatTile,ConfidenceBadge}.tsx`
-- [ ] Task 7: Bundled datasets — `data/emails.ts` (~40), `data/youtube.ts` (~150), `data/questions.ts`
-- [ ] Task 8: `lib/batch.ts` + `app/api/classify-batch/route.ts` (concurrency 5, error isolation)
-- [ ] Task 9: `app/playground/page.tsx` (Level 1) — routes already linked in navbar
-- [ ] Task 10: `app/emails/page.tsx` + `lib/aggregate.ts` (Level 2)
-- [ ] Task 11: `app/youtube/page.tsx` + `lib/youtube.ts` optional live fetch (Level 3)
-- [ ] Task 12: README, verify in browser, push to GitHub (confirm `.env.local` NOT tracked)
+## Done ✅ (continued)
+- [x] Task 6: Chart components (Donut, Histogram, Gauge, StatTile, ConfidenceBadge, palette)
+- [x] Task 7: Bundled datasets — `data/emails.ts` (40), `data/youtube.ts` (50), `data/questions.ts`
+- [x] Task 8: `lib/batch.ts` + `app/api/classify-batch/route.ts` (concurrency 5, error isolation) + `lib/aggregate.ts`
+- [x] Task 9: `app/playground/page.tsx` (Level 1) with raw request/response viewer
+- [x] Task 10: `app/emails/page.tsx` (Level 2)
+- [x] Task 11: `app/youtube/page.tsx` + `lib/youtube.ts` optional live fetch (Level 3)
+- [x] Task 12: README, verified end-to-end (all pages 200, live gateway calls work), pushed to GitHub
+
+**Status: COMPLETE.** 21 unit tests pass, `npm run build` clean, all three dashboards verified
+against the live gateway (`anthropic/claude-3-haiku`). Dev server: `npm run dev`.
+
+## Follow-ups / ideas
+- Rotate the gateway key (was pasted in chat).
+- Optional: persist batch results (currently session-memory only).
+- Optional: wire a real `YOUTUBE_API_KEY` for live video pulls.
 
 ## How to run
 ```bash
