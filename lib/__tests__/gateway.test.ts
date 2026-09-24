@@ -14,11 +14,12 @@ function okResponse(content: string) {
   };
 }
 
-function errResponse(status: number) {
+function errResponse(status: number, retryAfter?: string) {
   return {
     ok: false,
     status,
     statusText: "ERR",
+    headers: { get: (h: string) => (h.toLowerCase() === "retry-after" ? retryAfter ?? null : null) },
     json: async () => ({ error: { message: `boom ${status}` } }),
   };
 }

@@ -12,10 +12,23 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 class GatewayError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  retryAfterMs?: number;
+  constructor(message: string, status: number, retryAfterMs?: number) {
     super(message);
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** Pull a retry delay (ms) from the Retry-After header or a "Retry after Ns" message. */
+function parseRetryAfter(headerValue: string | null, message: string): number | undefined {
+  if (headerValue) {
+    const secs = Number(headerValue);
+    if (Number.isFinite(secs)) return secs * 1000;
+  }
+  const m = message.match(/retry after (\d+)\s*s/i);
+  if (m) return Number(m[1]) * 1000;
+  return undefined;
 }
 
 async function callOnce(model: string, messages: ChatMessage[], maxTokens: number): Promise<ChatResult> {
@@ -39,7 +52,8 @@ async function callOnce(model: string, messages: ChatMessage[], maxTokens: numbe
     } catch {
       /* ignore parse error */
     }
-    throw new GatewayError(detail, res.status);
+    const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"), detail);
+    throw new GatewayError(detail, res.status, retryAfterMs);
   }
 
   const body = await res.json();
@@ -61,14 +75,17 @@ async function callOnce(model: string, messages: ChatMessage[], maxTokens: numbe
  */
 export async function chat(
   messages: ChatMessage[],
-  opts: { model?: string; maxTokens?: number } = {},
+  opts: { model?: string; maxTokens?: number; maxRetries?: number } = {},
 ): Promise<ChatResult> {
   const maxTokens = opts.maxTokens ?? 1024;
   const models = opts.model ? [opts.model] : [PRIMARY_MODEL, FALLBACK_MODEL];
+  const maxRetries = opts.maxRetries ?? 4;
+  // Cap how long we're willing to wait on a single 429 so a request can't hang forever.
+  const maxWaitMs = 65_000;
 
   let lastErr: unknown;
   for (const model of models) {
-    for (let attempt = 0; attempt <= 2; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         return await callOnce(model, messages, maxTokens);
       } catch (err) {
@@ -76,7 +93,12 @@ export async function chat(
         const status = err instanceof GatewayError ? err.status : 0;
         const retryable = status === 429 || (status >= 500 && status < 600);
         if (!retryable) break; // move to next model (or throw)
-        if (attempt < 2) await sleep(300 * 2 ** attempt);
+        if (attempt < maxRetries) {
+          // Honor the server's Retry-After when present; otherwise exponential backoff.
+          const suggested = err instanceof GatewayError ? err.retryAfterMs : undefined;
+          const wait = Math.min(suggested ?? 500 * 2 ** attempt, maxWaitMs);
+          await sleep(wait);
+        }
       }
     }
   }

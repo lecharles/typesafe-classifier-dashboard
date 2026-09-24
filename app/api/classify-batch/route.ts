@@ -28,7 +28,9 @@ export async function POST(req: Request) {
 
   try {
     const results = await classifyBatch(parsed.data.items, parsed.data.questions, {
-      concurrency: parsed.data.concurrency ?? 5,
+      // Free-tier gateway allows ~5 requests/minute; keep concurrency modest and let
+      // the gateway client honor Retry-After for the rest.
+      concurrency: parsed.data.concurrency ?? 3,
     });
     return NextResponse.json({ results });
   } catch (err) {

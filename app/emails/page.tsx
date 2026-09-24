@@ -26,6 +26,7 @@ export default function EmailsPage() {
   const { results, loading, error, run } = useBatch();
   const [sortKey, setSortKey] = useState<SortKey>("priority");
   const [asc, setAsc] = useState(false);
+  const [limit, setLimit] = useState(10);
 
   const ok = successes(results);
   const usage = sumUsage(results);
@@ -63,7 +64,8 @@ export default function EmailsPage() {
   }
 
   function classifyAll() {
-    run(emails.map((e) => ({ id: e.id, state: `Subject: ${e.subject}\n\n${e.body}` })), EMAIL_QUESTIONS);
+    const subset = emails.slice(0, limit);
+    run(subset.map((e) => ({ id: e.id, state: `Subject: ${e.subject}\n\n${e.body}` })), EMAIL_QUESTIONS);
   }
 
   return (
@@ -75,10 +77,29 @@ export default function EmailsPage() {
 
       <div className="row between" style={{ marginBottom: 16 }}>
         <span className="muted">{ok.length ? `${ok.length} classified` : "Not classified yet"}</span>
-        <button onClick={classifyAll} disabled={loading}>
-          {loading ? "Classifying…" : `Classify all ${emails.length}`}
-        </button>
+        <div className="row" style={{ gap: 10 }}>
+          <label className="row" style={{ gap: 6 }}>
+            <span className="muted" style={{ fontSize: 13 }}>How many:</span>
+            <select
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              disabled={loading}
+              style={{ width: "auto" }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={emails.length}>All {emails.length}</option>
+            </select>
+          </label>
+          <button onClick={classifyAll} disabled={loading}>
+            {loading ? "Classifying…" : `Classify ${limit}`}
+          </button>
+        </div>
       </div>
+      <p className="muted" style={{ fontSize: 12, marginTop: -8, marginBottom: 16 }}>
+        Free-tier gateway allows ~5 requests/minute, so larger runs take a few minutes.
+      </p>
 
       {loading && (
         <div className="progress" style={{ marginBottom: 16 }}>

@@ -26,6 +26,7 @@ export default function YouTubePage() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [source, setSource] = useState<string>("");
   const [liveEnabled, setLiveEnabled] = useState(false);
+  const [limit, setLimit] = useState(10);
 
   useEffect(() => {
     fetch("/api/youtube")
@@ -43,8 +44,9 @@ export default function YouTubePage() {
   const byId = useMemo(() => new Map(videos.map((v) => [v.id, v])), [videos]);
 
   function analyze() {
+    const subset = videos.slice(0, limit);
     run(
-      videos.map((v) => ({ id: v.id, state: `Title: ${v.title}\nChannel: ${v.channel}\nDescription: ${v.description}` })),
+      subset.map((v) => ({ id: v.id, state: `Title: ${v.title}\nChannel: ${v.channel}\nDescription: ${v.description}` })),
       YOUTUBE_QUESTIONS,
     );
   }
@@ -60,10 +62,29 @@ export default function YouTubePage() {
         <span className="pill">
           source: {source || "…"}{liveEnabled ? " (live API available)" : " (set YOUTUBE_API_KEY for live)"}
         </span>
-        <button onClick={analyze} disabled={loading || !videos.length}>
-          {loading ? "Analyzing…" : `Analyze ${videos.length} videos`}
-        </button>
+        <div className="row" style={{ gap: 10 }}>
+          <label className="row" style={{ gap: 6 }}>
+            <span className="muted" style={{ fontSize: 13 }}>How many:</span>
+            <select
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              disabled={loading}
+              style={{ width: "auto" }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={videos.length || 50}>All {videos.length || 50}</option>
+            </select>
+          </label>
+          <button onClick={analyze} disabled={loading || !videos.length}>
+            {loading ? "Analyzing…" : `Analyze ${Math.min(limit, videos.length)}`}
+          </button>
+        </div>
       </div>
+      <p className="muted" style={{ fontSize: 12, marginTop: -8, marginBottom: 16 }}>
+        Free-tier gateway allows ~5 requests/minute, so larger runs take a few minutes.
+      </p>
 
       {ok.length > 0 && (
         <>
