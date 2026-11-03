@@ -130,7 +130,7 @@ describe("jev.systemOne", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://ai-gateway.vercel.sh/typesafe/v1/systemone");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer gateway-test-key");
-    expect(JSON.parse(init.body as string).model).toBe("typesafe-ai/jev");
+    expect(JSON.parse(init.body as string).model).toBe("jev");
     expect(res.model).toBe("typesafe-ai/jev-1.14.0");
 
     delete process.env.TYPESAFE_API_BASE;
@@ -158,7 +158,7 @@ describe("gateway-routed defaults", () => {
 
   it("defaultJevModel names differ per route", () => {
     process.env.TYPESAFE_API_BASE = "https://ai-gateway.vercel.sh/typesafe";
-    expect(defaultJevModel()).toBe("typesafe-ai/jev");
+    expect(defaultJevModel()).toBe("jev");
     delete process.env.TYPESAFE_API_BASE;
     expect(defaultJevModel()).toBe("jev-latest");
   });

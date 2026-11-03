@@ -29,7 +29,7 @@ so complex judgments become small, testable decisions instead of one fuzzy promp
 
 | Provider | Selected by | Calls | Notes |
 |----------|-------------|-------|-------|
-| `jev` | `TYPESAFE_API_KEY`, **or** `AI_GATEWAY_API_KEY` + `TYPESAFE_API_BASE=https://ai-gateway.vercel.sh/typesafe` (default when either is available) | `POST {base}/v1/systemone` | Real TypeSafe/Jev. One request answers **all** questions. Retry on 429/529/5xx with `Retry-After`. Model via `JEV_MODEL` (auto: `typesafe-ai/jev` via gateway, `jev-latest` direct). |
+| `jev` | `TYPESAFE_API_KEY`, **or** `AI_GATEWAY_API_KEY` + `TYPESAFE_API_BASE=https://ai-gateway.vercel.sh/typesafe` (default when either is available) | `POST {base}/v1/systemone` | Real TypeSafe/Jev. One request answers **all** questions. Retry on 429/529/5xx with `Retry-After`. Model via `JEV_MODEL` (auto: `jev` via gateway, `jev-latest` direct). |
 | `gateway` | fallback when no Jev route | Vercel AI Gateway chat completions | Emulated primitives via strict-JSON prompting (`claude-3-haiku`, `nova-micro` fallback). |
 
 Override globally with `CLASSIFIER_PROVIDER=jev|gateway`, or per request by adding
@@ -164,7 +164,7 @@ npm run dev                    # http://localhost:3000
 | `AI_GATEWAY_API_KEY` | one key covers everything | Vercel AI Gateway key (`vck_...`). Powers BOTH real Jev (via the TypeSafe route below) and the emulated fallback (`anthropic/claude-3-haiku`). |
 | `TYPESAFE_API_BASE` | for real Jev via gateway | Set to `https://ai-gateway.vercel.sh/typesafe` to route the `jev` provider through AI Gateway. |
 | `TYPESAFE_API_KEY` | alternative | Direct console.typesafe.ai key (takes precedence over the gateway route). |
-| `JEV_MODEL` | no | Jev model/alias. Default auto: `typesafe-ai/jev` (gateway) / `jev-latest` (direct). |
+| `JEV_MODEL` | no | Jev model/alias. Default auto: `jev` (gateway) / `jev-latest` (direct). |
 | `CLASSIFIER_PROVIDER` | no | Force default backend: `jev` or `gateway`. |
 | `CLASSIFIER_MODEL` | no | Emulated-path gateway model id. Default `anthropic/claude-3-haiku`. |
 | `YOUTUBE_API_KEY` | no | Enables the live YouTube Data API path. Without it, the bundled sample is used. |

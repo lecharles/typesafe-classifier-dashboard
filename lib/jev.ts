@@ -29,7 +29,7 @@ function isGatewayRoute(): boolean {
 
 /** Model default differs per route: gateway lists `typesafe-ai/jev`, direct lists `jev-latest`. */
 export const JEV_MODEL_DEFAULT = "jev-latest";
-export const JEV_MODEL_DEFAULT_GATEWAY = "typesafe-ai/jev";
+export const JEV_MODEL_DEFAULT_GATEWAY = "jev";
 
 export function defaultJevModel(): string {
   return isGatewayRoute() ? JEV_MODEL_DEFAULT_GATEWAY : JEV_MODEL_DEFAULT;
