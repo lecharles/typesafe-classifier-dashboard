@@ -1,5 +1,5 @@
 import { chat, type ChatMessage } from "@/lib/gateway";
-import { systemOne, JEV_MODEL_DEFAULT } from "@/lib/jev";
+import { systemOne, defaultJevModel, jevAvailable } from "@/lib/jev";
 import {
   answerSchemaFor,
   type Answer,
@@ -122,7 +122,7 @@ function addUsage(a: Usage, b: Usage): Usage {
 export function defaultProvider(): Provider {
   const env = (process.env.CLASSIFIER_PROVIDER || "").toLowerCase();
   if (env === "jev" || env === "gateway") return env;
-  return process.env.TYPESAFE_API_KEY ? "jev" : "gateway";
+  return jevAvailable() ? "jev" : "gateway";
 }
 
 export type ClassifyOptions = { provider?: Provider };
@@ -140,7 +140,7 @@ export async function classify(
 
 /** The real Jev API: one native System One request answers every question. */
 async function classifyWithJev(req: ClassifyRequest): Promise<ClassifyResult> {
-  const model = process.env.JEV_MODEL || JEV_MODEL_DEFAULT;
+  const model = process.env.JEV_MODEL || defaultJevModel();
   const res = await systemOne({ model, state: req.state, questions: req.questions });
   const answers = validateAnswers(res.answers, req.questions);
   return { answers, usage: res.usage, model: res.model, provider: "jev" };

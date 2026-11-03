@@ -1,20 +1,49 @@
 import type { Question, Usage } from "@/lib/schema";
 
 /**
- * Client for the real TypeSafe (Jev) System One API.
+ * Client for the real TypeSafe (Jev) System One API — either directly at
+ * api.typesafe.ai or through the Vercel AI Gateway's TypeSafe-compatible
+ * surface (https://ai-gateway.vercel.sh/typesafe, billed via the gateway key).
  *
  * Docs: https://docs.typesafe.ai/api/system-one
- *   POST https://api.typesafe.ai/v1/systemone   — answer typed questions about a state
- *   GET  https://api.typesafe.ai/v1/models      — list models/aliases for this key
- * Auth: `Authorization: Bearer <TYPESAFE_API_KEY>`.
+ *       https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe
+ *   POST {base}/v1/systemone   — answer typed questions about a state
+ *   GET  {base}/v1/models      — list models/aliases available
+ * Auth: `Authorization: Bearer <TYPESAFE_API_KEY or AI_GATEWAY_API_KEY>`.
  *
  * The request/response shapes here match lib/schema.ts exactly: the app was
  * built to emulate Jev's Choice/Score/Noul primitives, so the swap is a
  * transport change, not a model change.
  */
 
-const BASE_URL = "https://api.typesafe.ai";
+/** Direct TypeSafe API by default; set TYPESAFE_API_BASE to route through the
+ *  Vercel AI Gateway (https://ai-gateway.vercel.sh/typesafe). Read at call time
+ *  so the deployed env, not the import-time env, decides the route. */
+function baseUrl(): string {
+  return process.env.TYPESAFE_API_BASE || "https://api.typesafe.ai";
+}
+
+function isGatewayRoute(): boolean {
+  return baseUrl().includes("ai-gateway.vercel.sh");
+}
+
+/** Model default differs per route: gateway lists `typesafe-ai/jev`, direct lists `jev-latest`. */
 export const JEV_MODEL_DEFAULT = "jev-latest";
+export const JEV_MODEL_DEFAULT_GATEWAY = "typesafe-ai/jev";
+
+export function defaultJevModel(): string {
+  return isGatewayRoute() ? JEV_MODEL_DEFAULT_GATEWAY : JEV_MODEL_DEFAULT;
+}
+
+/** Resolve the bearer key: dedicated TypeSafe key first, else the AI Gateway key when routed through the gateway. */
+export function jevKey(): string | undefined {
+  return process.env.TYPESAFE_API_KEY || (isGatewayRoute() ? process.env.AI_GATEWAY_API_KEY : undefined);
+}
+
+/** True when a real Jev backend is reachable with the current env. */
+export function jevAvailable(): boolean {
+  return jevKey() !== undefined;
+}
 
 export type SystemOneRequest = {
   model: string;
@@ -81,8 +110,8 @@ export async function systemOne(
   request: SystemOneRequest,
   opts: { maxRetries?: number } = {},
 ): Promise<SystemOneResponse> {
-  const key = process.env.TYPESAFE_API_KEY;
-  if (!key) throw new JevError("TYPESAFE_API_KEY is not set", 401);
+  const key = jevKey();
+  if (!key) throw new JevError("TYPESAFE_API_KEY (or AI_GATEWAY_API_KEY with the gateway route) is not set", 401);
   const maxRetries = opts.maxRetries ?? 4;
   const maxWaitMs = 65_000;
 
@@ -90,7 +119,7 @@ export async function systemOne(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let res: Response;
     try {
-      res = await fetch(`${BASE_URL}/v1/systemone`, {
+      res = await fetch(`${baseUrl()}/v1/systemone`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${key}`,
@@ -141,9 +170,9 @@ export async function systemOne(
 
 /** GET /v1/models — connectivity/credential check; lists names and aliases. */
 export async function listModels(): Promise<ModelInfo[]> {
-  const key = process.env.TYPESAFE_API_KEY;
-  if (!key) throw new JevError("TYPESAFE_API_KEY is not set", 401);
-  const res = await fetch(`${BASE_URL}/v1/models`, {
+  const key = jevKey();
+  if (!key) throw new JevError("TYPESAFE_API_KEY (or AI_GATEWAY_API_KEY with the gateway route) is not set", 401);
+  const res = await fetch(`${baseUrl()}/v1/models`, {
     headers: { Authorization: `Bearer ${key}` },
   });
   if (!res.ok) {

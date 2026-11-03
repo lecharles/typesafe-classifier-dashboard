@@ -79,3 +79,15 @@ gateway mode and returns a clear 401 message.
 Next (Day 2): live smoke vs real API once the key lands + provider toggle + raw-IO view;
 (Day 3) VPS deploy behind a public port + minisite index link; (Day 4) emulated-vs-Jev
 comparison harness on the bundled email/YouTube sets.
+
+## Route discovery (2026-11-02, later same day)
+
+The Vercel AI Gateway hosts a **TypeSafe-compatible surface**:
+`https://ai-gateway.vercel.sh/typesafe/v1/systemone` (+ `/typesafe/v1/models`),
+auth = the same `vck_` AI Gateway key, model ids `typesafe-ai/jev`,
+`typesafe-ai/jev-1.13.0`, `typesafe-ai/jev-1.14.0`.
+=> Carlos's existing Vercel gateway key is enough for REAL Jev; no separate
+console.typesafe.ai account needed. lib/jev.ts now supports both routes
+(TYPESAFE_API_BASE + key fallback), gateway route selected by default once the
+vck key is in ~/secrets/classifier.env. One key then powers BOTH providers
+(real jev + emulated claude), which makes the comparison harness trivial.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { systemOne, listModels, JevError } from "@/lib/jev";
+import { systemOne, listModels, defaultJevModel, JevError } from "@/lib/jev";
 import { classify, defaultProvider } from "@/lib/classify";
 import type { Question } from "@/lib/schema";
 
@@ -116,6 +116,51 @@ describe("jev.systemOne", () => {
       "422 at questions.urgency.score.criteria: Field required",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes through the Vercel AI Gateway using the gateway key when TYPESAFE_API_BASE is set", async () => {
+    process.env.TYPESAFE_API_BASE = "https://ai-gateway.vercel.sh/typesafe";
+    delete process.env.TYPESAFE_API_KEY;
+    process.env.AI_GATEWAY_API_KEY="***";
+    const fetchMock = vi.fn().mockResolvedValue(okJev(answers, "typesafe-ai/jev-1.14.0"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await systemOne({ model: defaultJevModel(), state: "s", questions });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://ai-gateway.vercel.sh/typesafe/v1/systemone");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer vck-gateway-key");
+    expect(JSON.parse(init.body as string).model).toBe("typesafe-ai/jev");
+    expect(res.model).toBe("typesafe-ai/jev-1.14.0");
+
+    delete process.env.TYPESAFE_API_BASE;
+    delete process.env.AI_GATEWAY_API_KEY;
+  });
+});
+
+describe("gateway-routed defaults", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.TYPESAFE_API_BASE;
+    delete process.env.AI_GATEWAY_API_KEY;
+    delete process.env.CLASSIFIER_PROVIDER;
+  });
+
+  it("defaultProvider picks jev when only a gateway key + gateway base exist", () => {
+    process.env.TYPESAFE_API_BASE = "https://ai-gateway.vercel.sh/typesafe";
+    process.env.AI_GATEWAY_API_KEY="***";
+    expect(defaultProvider()).toBe("jev");
+    // direct route without a Typesafe key falls back to the emulation
+    delete process.env.TYPESAFE_API_BASE;
+    expect(defaultProvider()).toBe("gateway");
+  });
+
+  it("defaultJevModel names differ per route", () => {
+    process.env.TYPESAFE_API_BASE = "https://ai-gateway.vercel.sh/typesafe";
+    expect(defaultJevModel()).toBe("typesafe-ai/jev");
+    delete process.env.TYPESAFE_API_BASE;
+    expect(defaultJevModel()).toBe("jev-latest");
   });
 });
 
