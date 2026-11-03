@@ -5,6 +5,10 @@ vi.mock("@/lib/gateway", () => ({
   chat: vi.fn(),
 }));
 
+// Pin the provider: these tests exercise the emulated gateway path regardless
+// of ambient env (a deployed TYPESAFE_API_KEY / gateway route must not flip it).
+process.env.CLASSIFIER_PROVIDER = "gateway";
+
 import { classify, extractJson } from "@/lib/classify";
 import { chat } from "@/lib/gateway";
 import type { ClassifyRequest } from "@/lib/schema";
