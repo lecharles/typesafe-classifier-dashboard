@@ -121,7 +121,7 @@ describe("jev.systemOne", () => {
   it("routes through the Vercel AI Gateway using the gateway key when TYPESAFE_API_BASE is set", async () => {
     process.env.TYPESAFE_API_BASE = "https://ai-gateway.vercel.sh/typesafe";
     delete process.env.TYPESAFE_API_KEY;
-    process.env.AI_GATEWAY_API_KEY="***";
+    process.env.AI_GATEWAY_API_KEY="gateway-test-key";
     const fetchMock = vi.fn().mockResolvedValue(okJev(answers, "typesafe-ai/jev-1.14.0"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -129,7 +129,7 @@ describe("jev.systemOne", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://ai-gateway.vercel.sh/typesafe/v1/systemone");
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer vck-gateway-key");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer gateway-test-key");
     expect(JSON.parse(init.body as string).model).toBe("typesafe-ai/jev");
     expect(res.model).toBe("typesafe-ai/jev-1.14.0");
 
@@ -149,7 +149,7 @@ describe("gateway-routed defaults", () => {
 
   it("defaultProvider picks jev when only a gateway key + gateway base exist", () => {
     process.env.TYPESAFE_API_BASE = "https://ai-gateway.vercel.sh/typesafe";
-    process.env.AI_GATEWAY_API_KEY="***";
+    process.env.AI_GATEWAY_API_KEY="gateway-test-key";
     expect(defaultProvider()).toBe("jev");
     // direct route without a Typesafe key falls back to the emulation
     delete process.env.TYPESAFE_API_BASE;
