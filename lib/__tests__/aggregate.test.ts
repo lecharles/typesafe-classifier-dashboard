@@ -19,6 +19,7 @@ const results: BatchItemResult[] = [
       },
       usage: { input_tokens: 10, output_tokens: 5 },
       model: "m",
+      provider: "gateway",
     },
   },
   {
@@ -31,6 +32,7 @@ const results: BatchItemResult[] = [
       },
       usage: { input_tokens: 20, output_tokens: 8 },
       model: "m",
+      provider: "gateway",
     },
   },
   { id: "c", error: "boom" },

@@ -20,9 +20,22 @@ three decision primitives:
 Every question is atomic and evaluated independently, then composed in application code —
 so complex judgments become small, testable decisions instead of one fuzzy prompt.
 
-> **Note:** typesafe.ai / Jev has its own separate API and key. This project **emulates**
-> those primitives through a general model on the Vercel AI Gateway, so it runs with a
-> standard `vck_...` gateway key.
+> **Note:** typesafe.ai / Jev has its own separate API and key. This project can
+> **emulate** those primitives through a general model on the Vercel AI Gateway
+> (`vck_...` key), or call the **real Jev API** (`POST /v1/systemone`, `TYPESAFE_API_KEY`).
+> The question/answer schemas are identical for both paths; see "Backends" below.
+
+## Backends
+
+| Provider | Selected by | Calls | Notes |
+|----------|-------------|-------|-------|
+| `jev` | `TYPESAFE_API_KEY` set (default when present) | `https://api.typesafe.ai/v1/systemone` | Real TypeSafe/Jev. One request answers **all** questions. Retry on 429/529/5xx with `Retry-After`. Model alias via `JEV_MODEL` (default `jev-latest`). |
+| `gateway` | fallback when no Jev key | Vercel AI Gateway chat completions | Emulated primitives via strict-JSON prompting (`claude-3-haiku`, `nova-micro` fallback). |
+
+Override globally with `CLASSIFIER_PROVIDER=jev|gateway`, or per request by adding
+`"provider": "jev"` / `"gateway"` to the POST body of `/api/classify` and
+`/api/classify-batch`. Every result now carries its `provider` field, and
+`GET /api/models` proxies `GET /v1/models` for connectivity checks.
 
 ## The three dashboards
 
@@ -148,8 +161,11 @@ npm run dev                    # http://localhost:3000
 
 | Var | Required | Purpose |
 |-----|----------|---------|
-| `AI_GATEWAY_API_KEY` | yes | Your Vercel AI Gateway key (`vck_...`). |
-| `CLASSIFIER_MODEL` | no | Model id. Default `anthropic/claude-3-haiku`. |
+| `TYPESAFE_API_KEY` | for the real backend | TypeSafe console key (`console.typesafe.ai/keys`). Enables provider `jev`. |
+| `JEV_MODEL` | no | Jev model/alias. Default `jev-latest`. |
+| `CLASSIFIER_PROVIDER` | no | Force default backend: `jev` or `gateway`. |
+| `AI_GATEWAY_API_KEY` | for the emulated backend | Your Vercel AI Gateway key (`vck_...`). |
+| `CLASSIFIER_MODEL` | no | Gateway model id. Default `anthropic/claude-3-haiku`. |
 | `YOUTUBE_API_KEY` | no | Enables the live YouTube Data API path. Without it, the bundled sample is used. |
 
 ### A note on rate limits
@@ -174,7 +190,7 @@ The full plan lives in [docs/ROADMAP.md](docs/ROADMAP.md). Highlights:
 
 - Real datasets (public corpora + CSV/JSON upload) and a paste-in mode.
 - Multi-model comparison: run the same classification across several models and compare agreement.
-- Swap in the real typesafe.ai / Jev API and compare against the emulated primitives.
+- Swap in the real typesafe.ai / Jev API ✅ (done; comparison against the emulated primitives is next).
 - Persistence (SQLite), result export, and a live YouTube fetch path.
 
 ## Demo

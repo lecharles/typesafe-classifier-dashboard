@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { classify } from "@/lib/classify";
 import { classifyRequest } from "@/lib/schema";
 import { GatewayError } from "@/lib/gateway";
+import { JevError } from "@/lib/jev";
 
 export const runtime = "nodejs";
 
@@ -19,10 +20,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await classify(parsed.data);
+    const result = await classify(parsed.data, { provider: parsed.data.provider });
     return NextResponse.json(result);
   } catch (err) {
-    const status = err instanceof GatewayError ? 502 : 500;
+    const status = err instanceof GatewayError || err instanceof JevError ? 502 : 500;
     const message = err instanceof Error ? err.message : "classification failed";
     return NextResponse.json({ error: message }, { status });
   }

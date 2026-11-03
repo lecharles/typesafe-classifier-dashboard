@@ -86,11 +86,20 @@ export function answerSchemaFor(q: Question) {
  * Request / result envelopes.
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * Provider selection: the real TypeSafe/Jev API, or the emulated
+ * primitives through the Vercel AI Gateway.
+ * ------------------------------------------------------------------ */
+
+export const provider = z.enum(["jev", "gateway"]);
+export type Provider = z.infer<typeof provider>;
+
 export const classifyRequest = z.object({
   state: z.string().min(1),
   questions: z.record(question).refine((q) => Object.keys(q).length > 0, {
     message: "at least one question is required",
   }),
+  provider: provider.optional(),
 });
 export type ClassifyRequest = z.infer<typeof classifyRequest>;
 
@@ -100,4 +109,6 @@ export type ClassifyResult = {
   answers: Record<string, Answer>;
   usage: Usage;
   model: string;
+  /** Which backend produced this result. */
+  provider: Provider;
 };

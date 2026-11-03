@@ -18,8 +18,10 @@ where it could go next, roughly in priority order.
 - **Multi-model comparison.** Run the same classification across several gateway models
   (e.g. `claude-3-haiku`, `nova-micro`, a Qwen model) and compare labels, confidence, and
   agreement side by side.
-- **Provider abstraction → real typesafe.ai.** Swap the gateway classifier for typesafe.ai's
-  Jev when a key is available, and compare the emulated primitives against the real ones.
+- **Provider abstraction → real typesafe.ai.** ✅ Done (Nov 2026): the app now calls the
+  real Jev API (`POST /v1/systemone`) when `TYPESAFE_API_KEY` is set, keeping the gateway
+  emulation as a selectable fallback. Remaining: compare emulated answers against real
+  Jev answers on the bundled datasets (agreement, confidence, cost, latency).
 - **Persistence.** Save runs to a local SQLite database with history, so dashboards survive
   reloads and runs can be compared over time.
 - **Live YouTube + more sources.** Wire the YouTube Data API path end to end, and add other

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { classifyBatch } from "@/lib/batch";
-import { question } from "@/lib/schema";
+import { provider, question } from "@/lib/schema";
 import { GatewayError } from "@/lib/gateway";
+import { JevError } from "@/lib/jev";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,6 +12,7 @@ const batchRequest = z.object({
   items: z.array(z.object({ id: z.string(), state: z.string().min(1) })).min(1).max(200),
   questions: z.record(question).refine((q) => Object.keys(q).length > 0),
   concurrency: z.number().int().min(1).max(10).optional(),
+  provider: provider.optional(),
 });
 
 export async function POST(req: Request) {
@@ -28,13 +30,15 @@ export async function POST(req: Request) {
 
   try {
     const results = await classifyBatch(parsed.data.items, parsed.data.questions, {
-      // Free-tier gateway allows ~5 requests/minute; keep concurrency modest and let
-      // the gateway client honor Retry-After for the rest.
+      // The gateway free tier allows ~5 requests/minute, so keep concurrency
+      // modest there; Jev's per-org rate limits are checked in the console.
+      // Both clients honor Retry-After regardless.
       concurrency: parsed.data.concurrency ?? 3,
+      provider: parsed.data.provider,
     });
     return NextResponse.json({ results });
   } catch (err) {
-    const status = err instanceof GatewayError ? 502 : 500;
+    const status = err instanceof GatewayError || err instanceof JevError ? 502 : 500;
     const message = err instanceof Error ? err.message : "batch failed";
     return NextResponse.json({ error: message }, { status });
   }

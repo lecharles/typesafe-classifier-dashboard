@@ -50,3 +50,32 @@ npm install
 npm run dev                  # http://localhost:3000
 npm test                    # unit tests
 ```
+
+---
+
+## Lane update — real Jev swap (2026-11-02, Hermes lane)
+
+**Goal:** replace the emulated primitives with the real TypeSafe/Jev API and keep
+a comparison path. Daily commits from this lane; plan in docs/ROADMAP.md.
+
+Done today (Day 1):
+- `lib/jev.ts`: real System One client — `POST /v1/systemone`, Bearer `TYPESAFE_API_KEY`,
+  retry on 429/529/5xx + connection errors honoring `Retry-After` (cap 65s), non-retryable
+  400/401/413/415/422 surface readable `detail` (incl. 422 field paths). `GET /v1/models`
+  helper (`listModels`).
+- Provider abstraction: `classify(req, { provider })`, `defaultProvider()` from env
+  (`CLASSIFIER_PROVIDER`, else `jev` if key present, else `gateway`). Per-request override
+  via `"provider"` in `/api/classify` and `/api/classify-batch` bodies. Batch passes it
+  through; every `ClassifyResult` now carries `provider`.
+- Key win: the Jev path answers **all questions in one request** (the emulation needed a
+  prompt per state); gateway path untouched as fallback and for comparison runs.
+- `app/api/models/route.ts` for live connectivity checks. `.env.example` documents the new vars.
+- Tests: 9 new in `lib/__tests__/jev.test.ts` (30 total pass). `tsc --noEmit` clean, `next build` clean.
+
+Blocked on: a `TYPESAFE_API_KEY` (console.typesafe.ai/keys). It will be installed in
+`.env.local` on the VPS — never committed. Until then the deployed site falls back to
+gateway mode and returns a clear 401 message.
+
+Next (Day 2): live smoke vs real API once the key lands + provider toggle + raw-IO view;
+(Day 3) VPS deploy behind a public port + minisite index link; (Day 4) emulated-vs-Jev
+comparison harness on the bundled email/YouTube sets.

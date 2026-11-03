@@ -1,5 +1,5 @@
 import { classify } from "@/lib/classify";
-import type { ClassifyResult, Question } from "@/lib/schema";
+import type { ClassifyResult, Provider, Question } from "@/lib/schema";
 
 export type BatchItem = { id: string; state: string };
 
@@ -16,7 +16,7 @@ export type BatchItemResult = {
 export async function classifyBatch(
   items: BatchItem[],
   questions: Record<string, Question>,
-  opts: { concurrency?: number; classifyFn?: typeof classify } = {},
+  opts: { concurrency?: number; provider?: Provider; classifyFn?: typeof classify } = {},
 ): Promise<BatchItemResult[]> {
   const concurrency = Math.max(1, opts.concurrency ?? 5);
   const run = opts.classifyFn ?? classify;
@@ -29,7 +29,7 @@ export async function classifyBatch(
       if (i >= items.length) return;
       const item = items[i];
       try {
-        const result = await run({ state: item.state, questions });
+        const result = await run({ state: item.state, questions }, { provider: opts.provider });
         results[i] = { id: item.id, result };
       } catch (err) {
         results[i] = { id: item.id, error: err instanceof Error ? err.message : "failed" };

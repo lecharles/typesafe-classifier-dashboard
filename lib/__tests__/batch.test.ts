@@ -7,7 +7,7 @@ const questions: Record<string, Question> = {
 };
 
 function fakeResult(): ClassifyResult {
-  return { answers: { urgent: { type: "noul", noul: 0.5 } }, usage: { input_tokens: 1, output_tokens: 1 }, model: "m" };
+  return { answers: { urgent: { type: "noul", noul: 0.5 } }, usage: { input_tokens: 1, output_tokens: 1 }, model: "m", provider: "gateway" };
 }
 
 describe("classifyBatch", () => {
