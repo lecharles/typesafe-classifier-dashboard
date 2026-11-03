@@ -61,7 +61,7 @@ day**. Weekend rows are scoped docs/tests/polish. Never idle the train.
 
 ## December — daily
 
-December T rows formally land in the November close-out (S72/S74 deliverable);
+December T rows formally land in the November close-out (S74 deliverable);
 this is the draft they arm from. Gate reminders: RN prototype needs #25 sign-off,
 Swift shell needs S50 end-to-end.
 
