@@ -91,3 +91,22 @@ console.typesafe.ai account needed. lib/jev.ts now supports both routes
 (TYPESAFE_API_BASE + key fallback), gateway route selected by default once the
 vck key is in ~/secrets/classifier.env. One key then powers BOTH providers
 (real jev + emulated claude), which makes the comparison harness trivial.
+
+## LIVE MILESTONE — real Jev answering through the VPS (2026-11-03 00:44 UTC)
+
+Carlos topped up Vercel AI Gateway credits (the $20 key budget was just a cap, not a
+balance; the team had to move off free tier — Jev is a paid-tier model). The vck_ key now
+serves real Jev with zero code changes:
+- Default provider flipped to `jev` automatically (gateway route + credits present).
+- Single classify live: payment-failed email -> billing (0.99/0.98 conf), urgency score
+  2.99/3 (0.99), angry noul 0.9, 409 in / 71 out tokens, model "jev".
+- Batch (4 emails x 2 questions, concurrency 4) live in 0.386s, all correct.
+- Emulated fallback STILL selectable (provider=gateway -> amazon/nova-micro), and both
+  backends agree ("technical" on the outage email) => comparison harness is unblocked.
+- All pages 200 locally and at http://76.13.122.86:8094/.
+
+Cost note: Jev ~$0.042/1M input tokens; the full 90-item comparison run is well under $1.
+
+NEXT (was Day 3, now the live focus): comparison harness — run all 40 emails + 50 YouTube
+titles through BOTH providers; capture label agreement, confidence delta, latency, tokens,
+cost. Then UI toggle + fractional-score fidelity.
