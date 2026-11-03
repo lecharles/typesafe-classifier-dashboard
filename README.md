@@ -187,7 +187,7 @@ npm run build   # typecheck + production build
 
 ## Roadmap
 
-The full plan lives in [docs/ROADMAP.md](docs/ROADMAP.md). Highlights:
+The Jev-expertise plan lives in [docs/ROADMAP-V2.md](docs/ROADMAP-V2.md) (experience upgrades, dev views, use-case gallery). The original backlog remains in [docs/ROADMAP.md](docs/ROADMAP.md). Highlights:
 
 - Real datasets (public corpora + CSV/JSON upload) and a paste-in mode.
 - Multi-model comparison: run the same classification across several models and compare agreement.
