@@ -105,3 +105,8 @@ export function countByMonth(items: { publishedAt: string }[]): Bin[] {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([bin, count]) => ({ bin, count }));
 }
+
+/** Clamp a (possibly fractional, Jev-style) score to its bucket index. */
+export function bucketLevel(score: number, levelCount: number): number {
+  return Math.max(0, Math.min(levelCount - 1, Math.round(score)));
+}

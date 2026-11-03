@@ -5,7 +5,16 @@ import { colorAt } from "./palette";
 
 export type DonutDatum = { name: string; value: number };
 
-export function Donut({ data, height = 260 }: { data: DonutDatum[]; height?: number }) {
+export function Donut({
+  data,
+  height = 260,
+  onSelect,
+}: {
+  data: DonutDatum[];
+  height?: number;
+  /** Called with the slice name on click (also makes slices clickable). */
+  onSelect?: (name: string) => void;
+}) {
   const total = data.reduce((s, d) => s + d.value, 0);
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -19,8 +28,13 @@ export function Donut({ data, height = 260 }: { data: DonutDatum[]; height?: num
           paddingAngle={2}
           stroke="none"
         >
-          {data.map((_, i) => (
-            <Cell key={i} fill={colorAt(i)} />
+          {data.map((d, i) => (
+            <Cell
+              key={i}
+              fill={colorAt(i)}
+              onClick={onSelect ? () => onSelect(d.name) : undefined}
+              style={{ cursor: onSelect ? "pointer" : "auto" }}
+            />
           ))}
         </Pie>
         <Tooltip

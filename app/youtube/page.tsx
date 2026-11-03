@@ -16,10 +16,29 @@ import {
   sumUsage,
   successes,
   countByMonth,
+  bucketLevel,
 } from "@/lib/aggregate";
 
 const SENTIMENT_LEVELS = ["very neg", "neg", "neutral", "pos", "very pos"];
 const CLICKBAIT_LEVELS = ["none", "slight", "moderate", "very", "extreme"];
+
+type FilterKind = "category" | "clickbait" | "sentiment" | "clickbaity_plus";
+type Filter = { kind: FilterKind; value?: string } | null;
+type SortKey = "title" | "channel" | "topic" | "clickbait" | "sentiment";
+
+/** Jev returns fractional scores (e.g. 2.99); always bucket via round. */
+const levelIndex = (score: number, levels: string[]) => bucketLevel(score, levels.length);
+
+type Row = {
+  id: string;
+  title: string;
+  channel: string;
+  topic: string;
+  cbIndex: number;
+  cbLabel: string;
+  sentIndex: number;
+  sentLabel: string;
+};
 
 export default function YouTubePage() {
   const { results, loading, error, run } = useBatch();
@@ -27,6 +46,9 @@ export default function YouTubePage() {
   const [source, setSource] = useState<string>("");
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [limit, setLimit] = useState(10);
+  const [filter, setFilter] = useState<Filter>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("clickbait");
+  const [asc, setAsc] = useState(false);
 
   useEffect(() => {
     fetch("/api/youtube")
@@ -42,14 +64,74 @@ export default function YouTubePage() {
   const ok = successes(results);
   const usage = sumUsage(results);
   const byId = useMemo(() => new Map(videos.map((v) => [v.id, v])), [videos]);
+  const backend = ok[0]?.result ? `${ok[0].result.provider} · ${ok[0].result.model}` : "";
 
   function analyze() {
     const subset = videos.slice(0, limit);
+    setFilter(null);
     run(
       subset.map((v) => ({ id: v.id, state: `Title: ${v.title}\nChannel: ${v.channel}\nDescription: ${v.description}` })),
       YOUTUBE_QUESTIONS,
     );
   }
+
+  // Build rows once; filters and sorts derive from them.
+  const allRows: Row[] = useMemo(() => {
+    return ok
+      .map((r) => {
+        const a = r.result!.answers;
+        const v = byId.get(r.id);
+        if (!v) return null;
+        const cbScore = a.clickbait?.type === "score" ? a.clickbait.score : null;
+        const sentScore = a.title_sentiment?.type === "score" ? a.title_sentiment.score : null;
+        const cbIndex = cbScore === null ? -1 : levelIndex(cbScore, CLICKBAIT_LEVELS);
+        const sentIndex = sentScore === null ? -1 : levelIndex(sentScore, SENTIMENT_LEVELS);
+        return {
+          id: r.id,
+          title: v.title,
+          channel: v.channel,
+          topic: a.category?.type === "choice" ? a.category.choice : "—",
+          cbIndex,
+          cbLabel: cbIndex >= 0 ? CLICKBAIT_LEVELS[cbIndex] : "—",
+          sentIndex,
+          sentLabel: sentIndex >= 0 ? SENTIMENT_LEVELS[sentIndex] : "—",
+        };
+      })
+      .filter((r): r is Row => r !== null);
+  }, [results, byId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rows = useMemo(() => {
+    let out = allRows;
+    if (filter) {
+      out = out.filter((r) => {
+        if (filter.kind === "category") return r.topic === filter.value;
+        if (filter.kind === "clickbait") return r.cbLabel === filter.value;
+        if (filter.kind === "sentiment") return r.sentLabel === filter.value;
+        if (filter.kind === "clickbaity_plus") return r.cbIndex >= 3;
+        return true;
+      });
+    }
+    const dir = asc ? 1 : -1;
+    return [...out].sort((x, y) => {
+      if (sortKey === "title") return x.title.localeCompare(y.title) * dir;
+      if (sortKey === "channel") return x.channel.localeCompare(y.channel) * dir;
+      if (sortKey === "topic") return x.topic.localeCompare(y.topic) * dir;
+      if (sortKey === "clickbait") return (x.cbIndex - y.cbIndex) * dir;
+      return (x.sentIndex - y.sentIndex) * dir;
+    });
+  }, [allRows, filter, sortKey, asc]);
+
+  function toggle(f: Filter) {
+    setFilter((cur) => (cur && cur.kind === f?.kind && cur.value === f?.value ? null : f));
+  }
+
+  const clickbaitCount = allRows.filter((r) => r.cbIndex >= 3).length;
+  const FILTER_LABEL: Record<FilterKind, string> = {
+    category: "Topic",
+    clickbait: "Clickbait",
+    sentiment: "Sentiment",
+    clickbaity_plus: "Clickbait very+ (≥3)",
+  };
 
   return (
     <div>
@@ -59,9 +141,12 @@ export default function YouTubePage() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="row between" style={{ marginBottom: 16 }}>
-        <span className="pill">
-          source: {source || "…"}{liveEnabled ? " (live API available)" : " (set YOUTUBE_API_KEY for live)"}
-        </span>
+        <div className="row" style={{ gap: 10 }}>
+          <span className="pill">
+            source: {source || "…"}{liveEnabled ? " (live API available)" : " (set YOUTUBE_API_KEY for live)"}
+          </span>
+          {backend && <span className="pill">backend: {backend}</span>}
+        </div>
         <div className="row" style={{ gap: 10 }}>
           <label className="row" style={{ gap: 6 }}>
             <span className="muted" style={{ fontSize: 13 }}>How many:</span>
@@ -82,43 +167,56 @@ export default function YouTubePage() {
           </button>
         </div>
       </div>
-      <p className="muted" style={{ fontSize: 12, marginTop: -8, marginBottom: 16 }}>
-        Free-tier gateway allows ~5 requests/minute, so larger runs take a few minutes.
-      </p>
 
       {ok.length > 0 && (
         <>
           <div className="grid cols-4">
-            <StatTile label="Videos analyzed" value={ok.length} />
+            <StatTile label="Videos analyzed" value={ok.length} onClick={() => setFilter(null)}
+              active={filter === null} hint="Show all (clear filter)" />
             <StatTile label="Avg confidence" value={`${Math.round(avgConfidence(results) * 100)}%`} />
             <StatTile label="Tokens used" value={usage.input_tokens + usage.output_tokens} />
-            <StatTile label="Categories" value={choiceCounts(results, "category").length} />
+            <StatTile label="Clickbait (very+)" value={clickbaitCount}
+              onClick={() => toggle({ kind: "clickbaity_plus" })}
+              active={filter?.kind === "clickbaity_plus"}
+              hint="Click to list the very/extreme clickbait videos" />
           </div>
+
+          {filter && (
+            <div style={{ margin: "12px 0" }}>
+              <span className="filter-chip">
+                filter: {FILTER_LABEL[filter.kind]}{filter.value ? ` = ${filter.value}` : ""}
+                <button onClick={() => setFilter(null)} aria-label="Clear filter">×</button>
+              </span>
+              <span className="muted" style={{ fontSize: 12, marginLeft: 10 }}>
+                {rows.length} of {allRows.length} videos shown — click any chart element or stat to filter
+              </span>
+            </div>
+          )}
 
           <div className="grid cols-3" style={{ marginTop: 16 }}>
             <Gauge label="Promotional" value={noulRate(results, "is_promotional")} />
             <Gauge label="News" value={noulRate(results, "is_news")} />
-            <Gauge label="Clickbaity (very+)" value={ok.filter((r) => {
-              const a = r.result!.answers.clickbait;
-              return a?.type === "score" && a.score >= 3;
-            }).length / ok.length} />
+            <Gauge label="Clickbaity (very+)" value={clickbaitCount / (allRows.length || 1)} />
           </div>
 
           <div className="grid cols-2" style={{ marginTop: 16 }}>
             <div className="card">
               <h2 style={{ marginTop: 0 }}>Topic mix</h2>
-              <Donut data={choiceCounts(results, "category")} />
+              <Donut data={choiceCounts(results, "category")}
+                onSelect={(name) => toggle({ kind: "category", value: name })} />
             </div>
             <div className="card">
               <h2 style={{ marginTop: 0 }}>Title sentiment</h2>
-              <Histogram data={scoreHistogram(results, "title_sentiment", SENTIMENT_LEVELS)} colorByIndex />
+              <Histogram data={scoreHistogram(results, "title_sentiment", SENTIMENT_LEVELS)} colorByIndex
+                onSelect={(bin) => toggle({ kind: "sentiment", value: bin })} />
             </div>
           </div>
 
           <div className="grid cols-2" style={{ marginTop: 16 }}>
             <div className="card">
               <h2 style={{ marginTop: 0 }}>Clickbait levels</h2>
-              <Histogram data={scoreHistogram(results, "clickbait", CLICKBAIT_LEVELS)} color="#ff6b6b" />
+              <Histogram data={scoreHistogram(results, "clickbait", CLICKBAIT_LEVELS)} color="#ff6b6b"
+                onSelect={(bin) => toggle({ kind: "clickbait", value: bin })} />
             </div>
             <div className="card">
               <h2 style={{ marginTop: 0 }}>Videos by month</h2>
@@ -126,35 +224,41 @@ export default function YouTubePage() {
             </div>
           </div>
 
-          <h2>Every video</h2>
+          <h2>{filter ? `Matching videos (${rows.length})` : "Every video"}</h2>
           <div className="card">
             <table>
               <thead>
                 <tr>
-                  <th>Title</th>
-                  <th>Channel</th>
-                  <th>Topic</th>
-                  <th>Clickbait</th>
-                  <th>Sentiment</th>
+                  <th onClick={() => { if (sortKey === "title") setAsc(!asc); else { setSortKey("title"); setAsc(true); } }}>
+                    Title{sortKey === "title" ? (asc ? " ▲" : " ▼") : ""}
+                  </th>
+                  <th onClick={() => { if (sortKey === "channel") setAsc(!asc); else { setSortKey("channel"); setAsc(true); } }}>
+                    Channel{sortKey === "channel" ? (asc ? " ▲" : " ▼") : ""}
+                  </th>
+                  <th onClick={() => { if (sortKey === "topic") setAsc(!asc); else { setSortKey("topic"); setAsc(true); } }}>
+                    Topic{sortKey === "topic" ? (asc ? " ▲" : " ▼") : ""}
+                  </th>
+                  <th onClick={() => { if (sortKey === "clickbait") setAsc(!asc); else { setSortKey("clickbait"); setAsc(false); } }}>
+                    Clickbait{sortKey === "clickbait" ? (asc ? " ▲" : " ▼") : ""}
+                  </th>
+                  <th onClick={() => { if (sortKey === "sentiment") setAsc(!asc); else { setSortKey("sentiment"); setAsc(false); } }}>
+                    Sentiment{sortKey === "sentiment" ? (asc ? " ▲" : " ▼") : ""}
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {results.filter((r) => r.result).map((r) => {
-                  const a = r.result!.answers;
-                  const v = byId.get(r.id);
-                  const cat = a.category?.type === "choice" ? a.category.choice : "—";
-                  const cb = a.clickbait?.type === "score" ? CLICKBAIT_LEVELS[a.clickbait.score] : "—";
-                  const sent = a.title_sentiment?.type === "score" ? SENTIMENT_LEVELS[a.title_sentiment.score] : "—";
-                  return (
-                    <tr key={r.id}>
-                      <td>{v?.title}</td>
-                      <td className="muted">{v?.channel}</td>
-                      <td><span className="badge neutral">{cat}</span></td>
-                      <td>{cb}</td>
-                      <td>{sent}</td>
-                    </tr>
-                  );
-                })}
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.title}</td>
+                    <td className="muted">{r.channel}</td>
+                    <td><span className="badge neutral">{r.topic}</span></td>
+                    <td style={r.cbIndex >= 3 ? { color: "#ff6b6b", fontWeight: 700 } : undefined}>{r.cbLabel}</td>
+                    <td>{r.sentLabel}</td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan={5} className="muted">No videos match this filter.</td></tr>
+                )}
               </tbody>
             </table>
           </div>

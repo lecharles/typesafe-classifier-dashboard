@@ -110,3 +110,13 @@ Cost note: Jev ~$0.042/1M input tokens; the full 90-item comparison run is well 
 NEXT (was Day 3, now the live focus): comparison harness — run all 40 emails + 50 YouTube
 titles through BOTH providers; capture label agreement, confidence delta, latency, tokens,
 cost. Then UI toggle + fractional-score fidelity.
+
+## D3 shipped — YouTube interactivity (2026-11-03)
+- Clickable donut slices, histogram bars, and stat tiles (onSelect/onClick props; StatTile
+  now button-role with keyboard support + active state).
+- Click "Clickbait (very+)" tile or a histogram bar/donut slice -> table filters to that
+  bucket; filter chip with clear; "Videos analyzed" tile shows all again.
+- Sortable table (Title/Channel/Topic/Clickbait/Sentiment, asc/desc).
+- Jev fidelity: fractional scores (e.g. 2.99) bucket via new lib/aggregate.bucketLevel.
+- Verified live on real Jev, 25 videos: filter chip + 10/25 matching rows + title sort.
+- 36 tests pass; tsc + build clean. New screenshot: screenshots/5-youtube-filtered.png.

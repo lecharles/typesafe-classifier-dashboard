@@ -86,7 +86,7 @@ Each gallery item keeps the batch discipline: 5 items first, then 10, then All.
 
 | Day | Deliverable |
 |-----|-------------|
-| D3  | Track A start: chart→table filtering on YouTube (clickbait stat/Bar → filtered list) + sortable table |
+| D3  | ✅ DONE (2026-11-03): YouTube click-to-filter (stat tiles, donut slices, histogram bars) + sortable table + fractional-score bucketing (`bucketLevel`) + filter chip UI |
 | D4  | Same filtering + row drill-over (raw payload slide-over) on Emails |
 | D5  | Playground provider toggle + "ask both" side-by-side; latency pills |
 | D6  | Confidence-gated routing view on Emails (threshold sliders, auto vs human) |

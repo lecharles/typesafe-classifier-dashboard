@@ -10,11 +10,14 @@ export function Histogram({
   height = 240,
   color,
   colorByIndex = false,
+  onSelect,
 }: {
   data: HistogramDatum[];
   height?: number;
   color?: string;
   colorByIndex?: boolean;
+  /** Called with the bar's bin label on click (also makes bars clickable). */
+  onSelect?: (bin: string) => void;
 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -27,7 +30,14 @@ export function Histogram({
           contentStyle={{ background: "#141925", border: "1px solid #262f42", borderRadius: 10, color: "#e6e9ef" }}
         />
         <Bar dataKey="count" radius={[4, 4, 0, 0]} fill={color ?? colorAt(0)}>
-          {colorByIndex && data.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
+          {data.map((d, i) => (
+            <Cell
+              key={i}
+              fill={colorByIndex ? colorAt(i) : (color ?? colorAt(0))}
+              onClick={onSelect ? () => onSelect(d.bin) : undefined}
+              style={{ cursor: onSelect ? "pointer" : "auto" }}
+            />
+          ))}
         </Bar>
       </BarChart>
     </ResponsiveContainer>

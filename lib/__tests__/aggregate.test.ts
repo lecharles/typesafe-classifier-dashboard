@@ -63,3 +63,15 @@ describe("aggregate", () => {
     expect(sumUsage(results)).toEqual({ input_tokens: 30, output_tokens: 13 });
   });
 });
+
+import { bucketLevel } from "@/lib/aggregate";
+
+describe("bucketLevel (Jev fractional scores)", () => {
+  it("rounds into range and clamps outliers", () => {
+    expect(bucketLevel(2.99, 5)).toBe(3);
+    expect(bucketLevel(1.4, 4)).toBe(1);
+    expect(bucketLevel(4.8, 5)).toBe(4);
+    expect(bucketLevel(-0.2, 5)).toBe(0);
+    expect(bucketLevel(99, 5)).toBe(4);
+  });
+});
