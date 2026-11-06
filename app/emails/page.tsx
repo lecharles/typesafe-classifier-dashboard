@@ -17,10 +17,20 @@ import {
   sumUsage,
   successes,
 } from "@/lib/aggregate";
+import {
+  DEFAULT_THRESHOLDS,
+  normalizeThresholds,
+  routeDecision,
+  summarizeRouting,
+  type RouteBucket,
+} from "@/lib/routing";
 
 const PRIORITY_LEVELS = ["trivial", "low", "medium", "high", "critical"];
 
 type SortKey = "subject" | "category" | "priority" | "urgent" | "confidence";
+
+const ROUTE_BADGE: Record<RouteBucket, string> = { auto: "good", assist: "warn", human: "bad" };
+const ROUTE_LABEL: Record<RouteBucket, string> = { auto: "Auto", assist: "Assist", human: "Human" };
 
 export default function EmailsPage() {
   const { results, loading, error, run } = useBatch();
@@ -30,6 +40,10 @@ export default function EmailsPage() {
 
   const ok = successes(results);
   const usage = sumUsage(results);
+
+  const [high, setHigh] = useState(DEFAULT_THRESHOLDS.high);
+  const [low, setLow] = useState(DEFAULT_THRESHOLDS.low);
+  const thresholds = normalizeThresholds(high, low);
 
   const rows = useMemo(() => {
     const map = new Map(emails.map((e) => [e.id, e]));
@@ -62,6 +76,8 @@ export default function EmailsPage() {
       setAsc(false);
     }
   }
+
+  const routing = summarizeRouting(rows.map((r) => r.conf), thresholds);
 
   function classifyAll() {
     const subset = emails.slice(0, limit);
@@ -132,6 +148,51 @@ export default function EmailsPage() {
             <Histogram data={noulHistogram(results, "is_urgent")} color="#ffb454" />
           </div>
 
+          <div className="card" style={{ marginTop: 16 }}>
+            <h2 style={{ marginTop: 0 }}>Confidence-gated routing</h2>
+            <p className="muted" style={{ fontSize: 13 }}>
+              Slide the thresholds: items at or above the auto threshold ship without a human,
+              items below the review threshold go to a person, and the band between is
+              assist-mode (Jev drafts, human confirms).
+            </p>
+            <div className="grid cols-2" style={{ gap: 16 }}>
+              <label className="row" style={{ gap: 10 }}>
+                <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                  Auto ≥ {Math.round(thresholds.high * 100)}%
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(high * 100)}
+                  onChange={(e) => setHigh(Number(e.target.value) / 100)}
+                  style={{ flex: 1 }}
+                />
+              </label>
+              <label className="row" style={{ gap: 10 }}>
+                <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
+                  Human {"<"} {Math.round(thresholds.low * 100)}%
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(low * 100)}
+                  onChange={(e) => setLow(Number(e.target.value) / 100)}
+                  style={{ flex: 1 }}
+                />
+              </label>
+            </div>
+            <div className="grid cols-4" style={{ marginTop: 12 }}>
+              <StatTile label="Auto" value={routing.auto} />
+              <StatTile label="Assist" value={routing.assist} />
+              <StatTile label="Human review" value={routing.human} />
+              <StatTile label="Auto rate" value={`${Math.round(routing.autoRate * 100)}%`} />
+            </div>
+          </div>
+
           <h2>Every email</h2>
           <div className="card">
             <table>
@@ -142,10 +203,13 @@ export default function EmailsPage() {
                   <th onClick={() => sortBy("priority")}>Priority</th>
                   <th onClick={() => sortBy("urgent")}>Urgent</th>
                   <th onClick={() => sortBy("confidence")}>Conf.</th>
+                  <th>Routing</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ email, cat, pri, urg, conf }) => (
+                {rows.map(({ email, cat, pri, urg, conf }) => {
+                  const bucket = routeDecision(conf, thresholds);
+                  return (
                   <tr key={email.id}>
                     <td>{email.subject}</td>
                     <td><span className="badge neutral">{cat}</span></td>
@@ -156,8 +220,10 @@ export default function EmailsPage() {
                       </span>
                     </td>
                     <td><ConfidenceBadge value={conf} /></td>
+                    <td><span className={`badge ${ROUTE_BADGE[bucket]}`}>{ROUTE_LABEL[bucket]}</span></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
