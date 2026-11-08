@@ -19,6 +19,12 @@ const cards = [
     title: "YouTube analyzer",
     body: "Classify ~150 videos by topic, clickbait, sentiment, and more. Topic donut, sentiment histogram, gauges, timeline.",
   },
+  {
+    href: "/dispatch",
+    num: "Level 4",
+    title: "Tool dispatcher",
+    body: "UC#1 scaffold: a 5-function registry where every argument is a Jev Choice. Plan side-effect-free tool calls from any state.",
+  },
 ];
 
 export default function Home() {
