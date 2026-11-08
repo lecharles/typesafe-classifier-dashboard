@@ -13,6 +13,8 @@ const batchRequest = z.object({
   questions: z.record(question).refine((q) => Object.keys(q).length > 0),
   concurrency: z.number().int().min(1).max(10).optional(),
   provider: provider.optional(),
+  /** Dev mode (?dev=1): attach raw request/response traces + enable fallback. */
+  dev: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -35,6 +37,9 @@ export async function POST(req: Request) {
       // Both clients honor Retry-After regardless.
       concurrency: parsed.data.concurrency ?? 3,
       provider: parsed.data.provider,
+      // Dev view (?dev=1): record raw payloads and let jev failures fall back to the gateway.
+      trace: parsed.data.dev,
+      fallback: parsed.data.dev,
     });
     return NextResponse.json({ results });
   } catch (err) {

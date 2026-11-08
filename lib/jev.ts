@@ -101,19 +101,34 @@ function errorDetail(body: unknown, status: number, statusText: string): string 
   return `${status} ${statusText}`;
 }
 
+/** Mutable trace sink filled in by systemOne when the caller wants dev diagnostics (D7). */
+export type JevTrace = {
+  endpoint: string;
+  request: SystemOneRequest;
+  response?: unknown;
+  attempts: { status: number; error?: string; waited_ms?: number }[];
+};
+
 /**
  * Call POST /v1/systemone with retry on 429 / 529 / 5xx (and connection
  * errors): exponential backoff, honoring Retry-After, capped at 65s per wait.
  * Non-retryable statuses (400/401/413/415/422) throw immediately.
+ * Pass `trace` to record the raw wire request/response and per-attempt log.
  */
 export async function systemOne(
   request: SystemOneRequest,
-  opts: { maxRetries?: number } = {},
+  opts: { maxRetries?: number; trace?: JevTrace } = {},
 ): Promise<SystemOneResponse> {
   const key = jevKey();
   if (!key) throw new JevError("TYPESAFE_API_KEY (or AI_GATEWAY_API_KEY with the gateway route) is not set", 401);
   const maxRetries = opts.maxRetries ?? 4;
   const maxWaitMs = 65_000;
+
+  const trace = opts.trace;
+  if (trace) {
+    trace.endpoint = `${baseUrl()}/v1/systemone`;
+    trace.request = request;
+  }
 
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -129,16 +144,20 @@ export async function systemOne(
       });
     } catch (err) {
       // Network failure: retryable like a 5xx.
-      lastErr = new JevError(
-        `connection error: ${err instanceof Error ? err.message : String(err)}`,
-        0,
-      );
-      if (attempt < maxRetries) await sleep(Math.min(500 * 2 ** attempt, maxWaitMs));
+      const connMsg = `connection error: ${err instanceof Error ? err.message : String(err)}`;
+      lastErr = new JevError(connMsg, 0);
+      const waitMs = attempt < maxRetries ? Math.min(500 * 2 ** attempt, maxWaitMs) : undefined;
+      if (trace) trace.attempts.push({ status: 0, error: connMsg, waited_ms: waitMs });
+      if (waitMs !== undefined) await sleep(waitMs);
       continue;
       }
 
     if (res.ok) {
       const body = await res.json();
+      if (trace) {
+        trace.response = body;
+        trace.attempts.push({ status: res.status });
+      }
       const u = body?.usage ?? {};
       return {
         model: body?.model ?? request.model,
@@ -160,10 +179,12 @@ export async function systemOne(
     lastErr = new JevError(detail, res.status, retryAfterMs);
 
     const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
+    const waitMs = retryable && attempt < maxRetries
+      ? Math.min(retryAfterMs ?? 500 * 2 ** attempt, maxWaitMs)
+      : undefined;
+    if (trace) trace.attempts.push({ status: res.status, error: detail, waited_ms: waitMs });
     if (!retryable) throw lastErr;
-    if (attempt < maxRetries) {
-      await sleep(Math.min(retryAfterMs ?? 500 * 2 ** attempt, maxWaitMs));
-    }
+    if (waitMs !== undefined) await sleep(waitMs);
   }
   throw lastErr instanceof Error ? lastErr : new JevError("Jev request failed", 0);
 }

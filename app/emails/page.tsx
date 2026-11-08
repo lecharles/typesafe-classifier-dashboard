@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { emails } from "@/data/emails";
 import { EMAIL_QUESTIONS } from "@/data/questions";
 import { useBatch } from "@/components/useBatch";
+import { DevPanel } from "@/components/DevPanel";
+import { ExportButtons } from "@/components/ExportButtons";
 import { Donut } from "@/components/charts/Donut";
 import { Histogram } from "@/components/charts/Histogram";
 import { StatTile } from "@/components/charts/StatTile";
@@ -33,10 +35,15 @@ const ROUTE_BADGE: Record<RouteBucket, string> = { auto: "good", assist: "warn",
 const ROUTE_LABEL: Record<RouteBucket, string> = { auto: "Auto", assist: "Assist", human: "Human" };
 
 export default function EmailsPage() {
-  const { results, loading, error, run } = useBatch();
+  const { results, loading, error, run, savedAt, clearRun } = useBatch("emails");
   const [sortKey, setSortKey] = useState<SortKey>("priority");
   const [asc, setAsc] = useState(false);
   const [limit, setLimit] = useState(10);
+  // D7 shared dev view: ?dev=1 reveals per-item raw Jev payloads.
+  const [dev, setDev] = useState(false);
+  useEffect(() => {
+    setDev(new URLSearchParams(window.location.search).get("dev") === "1");
+  }, []);
 
   const ok = successes(results);
   const usage = sumUsage(results);
@@ -77,6 +84,20 @@ export default function EmailsPage() {
     }
   }
 
+  // D8: the table as data — CSV/JSON export of the current sort/view.
+  const exportRows = useMemo(
+    () =>
+      rows.map(({ email, cat, pri, urg, conf }) => ({
+        subject: email.subject,
+        category: cat,
+        priority: PRIORITY_LEVELS[pri] ?? "—",
+        urgent_pct: Math.round(urg * 100),
+        confidence_pct: Math.round(conf * 100),
+        routing: ROUTE_LABEL[routeDecision(conf, thresholds)],
+      })),
+    [rows, thresholds],
+  );
+
   const routing = summarizeRouting(rows.map((r) => r.conf), thresholds);
 
   function classifyAll() {
@@ -92,8 +113,16 @@ export default function EmailsPage() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="row between" style={{ marginBottom: 16 }}>
-        <span className="muted">{ok.length ? `${ok.length} classified` : "Not classified yet"}</span>
+        <span className="muted">
+          {ok.length ? `${ok.length} classified` : "Not classified yet"}
+          {savedAt && ok.length ? ` · restored ${new Date(savedAt).toLocaleTimeString()}` : ""}
+        </span>
         <div className="row" style={{ gap: 10 }}>
+          {savedAt && results.length > 0 && (
+            <button className="ghost" onClick={clearRun} disabled={loading}>
+              Clear run
+            </button>
+          )}
           <label className="row" style={{ gap: 6 }}>
             <span className="muted" style={{ fontSize: 13 }}>How many:</span>
             <select
@@ -193,7 +222,10 @@ export default function EmailsPage() {
             </div>
           </div>
 
-          <h2>Every email</h2>
+          <div className="row between" style={{ marginTop: 24, marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Every email</h2>
+            <ExportButtons filename="email-triage" rows={exportRows} />
+          </div>
           <div className="card">
             <table>
               <thead>
@@ -227,6 +259,8 @@ export default function EmailsPage() {
               </tbody>
             </table>
           </div>
+
+          {dev && <DevPanel results={results} />}
         </>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { chat, type ChatMessage } from "@/lib/gateway";
-import { systemOne, defaultJevModel, jevAvailable } from "@/lib/jev";
+import { systemOne, defaultJevModel, jevAvailable, type JevTrace } from "@/lib/jev";
 import {
   answerSchemaFor,
   type Answer,
@@ -125,7 +125,13 @@ export function defaultProvider(): Provider {
   return jevAvailable() ? "jev" : "gateway";
 }
 
-export type ClassifyOptions = { provider?: Provider };
+export type ClassifyOptions = {
+  provider?: Provider;
+  /** Record raw request/response + attempt log on the result (D7 dev view). */
+  trace?: boolean;
+  /** If the jev path fails outright, fall back to the gateway instead of erroring. */
+  fallback?: boolean;
+};
 
 /**
  * Classify a state against a set of typed questions using the chosen backend.
@@ -135,35 +141,78 @@ export async function classify(
   opts: ClassifyOptions = {},
 ): Promise<ClassifyResult> {
   const provider = opts.provider ?? req.provider ?? defaultProvider();
-  return provider === "jev" ? classifyWithJev(req) : classifyWithGateway(req);
+  if (provider !== "jev") return classifyWithGateway(req, opts);
+  try {
+    return await classifyWithJev(req, opts);
+  } catch (err) {
+    if (!opts.fallback) throw err;
+    const result = await classifyWithGateway(req, opts);
+    if (result.trace) {
+      result.trace.fallback_from = "jev";
+      result.trace.fallback_reason = err instanceof Error ? err.message : String(err);
+    }
+    return result;
+  }
 }
 
 /** The real Jev API: one native System One request answers every question. */
-async function classifyWithJev(req: ClassifyRequest): Promise<ClassifyResult> {
+async function classifyWithJev(req: ClassifyRequest, opts: ClassifyOptions): Promise<ClassifyResult> {
   const model = process.env.JEV_MODEL || defaultJevModel();
-  const res = await systemOne({ model, state: req.state, questions: req.questions });
+  const jevTrace: JevTrace | undefined = opts.trace
+    ? { endpoint: "", request: { model, state: req.state, questions: req.questions }, attempts: [] }
+    : undefined;
+  const res = await systemOne({ model, state: req.state, questions: req.questions }, { trace: jevTrace });
   const answers = validateAnswers(res.answers, req.questions);
-  return { answers, usage: res.usage, model: res.model, provider: "jev" };
+  const result: ClassifyResult = { answers, usage: res.usage, model: res.model, provider: "jev" };
+  if (jevTrace) {
+    result.trace = {
+      provider_used: "jev",
+      endpoint: jevTrace.endpoint,
+      request: jevTrace.request,
+      response: jevTrace.response,
+      attempts: jevTrace.attempts,
+      retries: Math.max(0, jevTrace.attempts.length - 1),
+    };
+  }
+  return result;
 }
 
 /**
  * Emulated path (Vercel AI Gateway). On invalid/malformed JSON, retries once
  * with a stricter instruction before giving up.
  */
-async function classifyWithGateway(req: ClassifyRequest): Promise<ClassifyResult> {
+async function classifyWithGateway(req: ClassifyRequest, opts: ClassifyOptions): Promise<ClassifyResult> {
   let usage: Usage = { input_tokens: 0, output_tokens: 0 };
   let model = "";
   let lastErr: unknown;
+  const attempts: { status: number; error?: string }[] = [];
+  let lastMessages: ChatMessage[] = [];
+  let lastText = "";
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const messages = buildPrompt(req, attempt > 0);
+    lastMessages = messages;
     const res = await chat(messages, { maxTokens: 1024 });
+    lastText = res.text;
     usage = addUsage(usage, res.usage);
     model = res.model;
     try {
       const answers = validateAnswers(extractJson(res.text), req.questions);
-      return { answers, usage, model, provider: "gateway" };
+      attempts.push({ status: 200 });
+      const result: ClassifyResult = { answers, usage, model, provider: "gateway" };
+      if (opts.trace) {
+        result.trace = {
+          provider_used: "gateway",
+          endpoint: "https://ai-gateway.vercel.sh/v1/chat/completions (emulated)",
+          request: lastMessages,
+          response: lastText,
+          attempts,
+          retries: attempts.length - 1,
+        };
+      }
+      return result;
     } catch (err) {
+      attempts.push({ status: 0, error: err instanceof Error ? err.message : String(err) });
       lastErr = err;
     }
   }

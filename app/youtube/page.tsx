@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { Video } from "@/data/youtube";
 import { YOUTUBE_QUESTIONS } from "@/data/questions";
 import { useBatch } from "@/components/useBatch";
+import { DevPanel } from "@/components/DevPanel";
+import { ExportButtons } from "@/components/ExportButtons";
 import { Donut } from "@/components/charts/Donut";
 import { Histogram } from "@/components/charts/Histogram";
 import { Gauge } from "@/components/charts/Gauge";
@@ -41,7 +43,7 @@ type Row = {
 };
 
 export default function YouTubePage() {
-  const { results, loading, error, run } = useBatch();
+  const { results, loading, error, run, savedAt, clearRun } = useBatch("youtube");
   const [videos, setVideos] = useState<Video[]>([]);
   const [source, setSource] = useState<string>("");
   const [liveEnabled, setLiveEnabled] = useState(false);
@@ -49,6 +51,11 @@ export default function YouTubePage() {
   const [filter, setFilter] = useState<Filter>(null);
   const [sortKey, setSortKey] = useState<SortKey>("clickbait");
   const [asc, setAsc] = useState(false);
+  // D7 shared dev view: ?dev=1 reveals per-item raw Jev payloads.
+  const [dev, setDev] = useState(false);
+  useEffect(() => {
+    setDev(new URLSearchParams(window.location.search).get("dev") === "1");
+  }, []);
 
   useEffect(() => {
     fetch("/api/youtube")
@@ -224,7 +231,33 @@ export default function YouTubePage() {
             </div>
           </div>
 
-          <h2>{filter ? `Matching videos (${rows.length})` : "Every video"}</h2>
+          <div className="row between" style={{ marginTop: 24, marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>
+              {filter ? `Matching videos (${rows.length})` : "Every video"}
+              {savedAt && results.length > 0 ? (
+                <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
+                  {" "}· restored {new Date(savedAt).toLocaleTimeString()}
+                </span>
+              ) : null}
+            </h2>
+            <div className="row" style={{ gap: 8 }}>
+              {savedAt && results.length > 0 && (
+                <button className="ghost" onClick={clearRun} disabled={loading}>
+                  Clear run
+                </button>
+              )}
+              <ExportButtons
+                filename="youtube-classified"
+                rows={rows.map(({ title, channel, topic, cbLabel, sentLabel }) => ({
+                  title,
+                  channel,
+                  topic,
+                  clickbait: cbLabel,
+                  sentiment: sentLabel,
+                }))}
+              />
+            </div>
+          </div>
           <div className="card">
             <table>
               <thead>
@@ -262,6 +295,8 @@ export default function YouTubePage() {
               </tbody>
             </table>
           </div>
+
+          {dev && <DevPanel results={results} />}
         </>
       )}
     </div>

@@ -105,10 +105,28 @@ export type ClassifyRequest = z.infer<typeof classifyRequest>;
 
 export type Usage = { input_tokens: number; output_tokens: number };
 
+/** One recorded network/validation attempt inside a classify call (D7 dev view). */
+export type AttemptLog = { status: number; error?: string; waited_ms?: number };
+
+/** Raw wire payloads + retry/fallback diagnostics, attached only when `dev` mode runs. */
+export type ClassifyTrace = {
+  provider_used: Provider;
+  endpoint: string;
+  request: unknown;
+  response?: unknown;
+  attempts: AttemptLog[];
+  retries: number;
+  /** Set when the item fell back from a failing provider to another. */
+  fallback_from?: Provider;
+  fallback_reason?: string;
+};
+
 export type ClassifyResult = {
   answers: Record<string, Answer>;
   usage: Usage;
   model: string;
   /** Which backend produced this result. */
   provider: Provider;
+  /** Present only when the batch ran with dev tracing enabled. */
+  trace?: ClassifyTrace;
 };

@@ -16,7 +16,13 @@ export type BatchItemResult = {
 export async function classifyBatch(
   items: BatchItem[],
   questions: Record<string, Question>,
-  opts: { concurrency?: number; provider?: Provider; classifyFn?: typeof classify } = {},
+  opts: {
+    concurrency?: number;
+    provider?: Provider;
+    trace?: boolean;
+    fallback?: boolean;
+    classifyFn?: typeof classify;
+  } = {},
 ): Promise<BatchItemResult[]> {
   const concurrency = Math.max(1, opts.concurrency ?? 5);
   const run = opts.classifyFn ?? classify;
@@ -29,7 +35,10 @@ export async function classifyBatch(
       if (i >= items.length) return;
       const item = items[i];
       try {
-        const result = await run({ state: item.state, questions }, { provider: opts.provider });
+        const result = await run(
+          { state: item.state, questions },
+          { provider: opts.provider, trace: opts.trace, fallback: opts.fallback },
+        );
         results[i] = { id: item.id, result };
       } catch (err) {
         results[i] = { id: item.id, error: err instanceof Error ? err.message : "failed" };
