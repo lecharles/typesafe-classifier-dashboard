@@ -103,3 +103,14 @@ pre { background: #0a0d13; border: 1px solid var(--border); border-radius: 10px;
 .stat-tile.active { border-color: var(--accent); background: rgba(62,207,142,0.08); }
 .filter-chip { display:inline-flex; align-items:center; gap:8px; background: var(--panel-2); border:1px solid var(--accent); padding:4px 12px; border-radius:999px; font-size:12px; color:#e6e9ef; }
 .filter-chip button { background:none; border:none; color:var(--muted); cursor:pointer; padding:0 2px; font-size:14px; }
+
+/* D4: click-to-filter + row drill-over slide-over */
+tbody tr.row-clickable { cursor: pointer; }
+tbody tr.row-clickable:hover td { background: var(--panel-2); }
+.slide-backdrop { position: fixed; inset: 0; background: rgba(4,6,10,.6); z-index: 40; }
+.slide-over {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(580px, 92vw);
+  background: var(--panel); border-left: 1px solid var(--border); z-index: 50;
+  padding: 20px 22px; display: flex; flex-direction: column; animation: slide-in .18s ease-out;
+}
+@keyframes slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
