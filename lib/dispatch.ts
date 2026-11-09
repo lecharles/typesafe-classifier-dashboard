@@ -116,7 +116,8 @@ export type PlanOptions = {
  * Ask the registry, one function at a time, whether it applies to `state`
  * and — if so — which declared option each argument takes. Returns the
  * calls that cleared the gate, highest confidence first. Pure plan: nothing
- * is executed (that lands in UC#1-live, 11-10).
+ * is executed here — execution is gated separately in `executePlan`
+ * (UC#1-live, 11-10).
  */
 export async function planDispatch(
   state: string,
@@ -167,3 +168,211 @@ export async function planDispatch(
   }
   return plan;
 }
+
+/* ------------------------------------------------------------------ *
+ * UC#1-live (11-10): confidence-gated execution in code + batches 5→10.
+ *
+ * The plan step already gates at `gate` (0.5); execution applies its own,
+ * stricter gate in CODE. A call below the exec gate is never run — it is
+ * held for a human, with the reason recorded. The effect runner is
+ * simulated (side-effect-free audit log) so the hub stays safe to demo;
+ * swapping in real effect handlers only touches `applyEffect`.
+ * ------------------------------------------------------------------ */
+
+/** Probability a call must reach for CODE to actually run it. */
+export const DEFAULT_EXEC_GATE = 0.85;
+
+/** Batch discipline ladder from the lane's standing rule: 5 → 10 → All. */
+export const BATCH_LADDER = [5, 10] as const;
+
+export type ExecStatus = "executed" | "held";
+
+export type ExecRecord = {
+  fn: string;
+  args: Record<string, string>;
+  confidence: number;
+  status: ExecStatus;
+  /** Audit-log line when executed; hold reason when not. */
+  note: string;
+};
+
+export type BatchItemReport = {
+  id: string;
+  state: string;
+  plan?: DispatchPlan;
+  records: ExecRecord[];
+  executed: number;
+  held: number;
+  error?: string;
+};
+
+export type BatchReport = {
+  items: BatchItemReport[];
+  totals: {
+    items: number;
+    planned: number;
+    executed: number;
+    held: number;
+    errors: number;
+    usage: Usage;
+  };
+  execGate: number;
+  model: string;
+  provider: Provider;
+};
+
+export type ExecuteOptions = {
+  /** In-code gate: calls under this confidence are held, never run. */
+  execGate?: number;
+  /** Audit sink for executed effects; defaults to an in-memory log. */
+  onEffect?: (record: ExecRecord) => void;
+};
+
+/** Simulated side effect — deterministic audit line, touches nothing real. */
+export function applyEffect(call: DispatchCall): string {
+  const args = Object.entries(call.args)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ");
+  return `applied ${call.fn}(${args})`;
+}
+
+/**
+ * Execute a plan IN CODE with its own confidence gate: `executed` only when
+ * confidence ≥ execGate; otherwise `held` for human review. Defense in
+ * depth: the call is re-checked against the registry before any effect is
+ * applied, even though planDispatch already validated it.
+ */
+export function executePlan(
+  plan: DispatchPlan,
+  opts: ExecuteOptions = {},
+): ExecRecord[] {
+  const execGate = opts.execGate ?? DEFAULT_EXEC_GATE;
+  const emit = opts.onEffect ?? (() => {});
+  const records: ExecRecord[] = [];
+  for (const call of plan.calls) {
+    const fn = REGISTRY.find((f) => f.name === call.fn);
+    const declaredArgs = fn ? Object.entries(fn.args) : [];
+    const valid =
+      !!fn &&
+      Object.keys(call.args).length === declaredArgs.length &&
+      declaredArgs.every(
+        ([arg, spec]) => spec.options.includes(call.args[arg] ?? ""),
+      );
+    if (!valid) {
+      throw new Error(
+        `dispatcher: refusing to execute ${call.fn} — not a declared registry call`,
+      );
+    }
+    if (call.confidence >= execGate) {
+      const record: ExecRecord = {
+        fn: call.fn,
+        args: { ...call.args },
+        confidence: call.confidence,
+        status: "executed",
+        note: applyEffect(call),
+      };
+      emit(record);
+      records.push(record);
+    } else {
+      records.push({
+        fn: call.fn,
+        args: { ...call.args },
+        confidence: call.confidence,
+        status: "held",
+        note: `confidence ${call.confidence.toFixed(2)} below exec gate ${execGate.toFixed(2)} — routed to human review`,
+      });
+    }
+  }
+  return records;
+}
+
+export type RunBatchOptions = PlanOptions &
+  ExecuteOptions & {
+    /** Cap on items processed; null = All. Default 5 (first ladder rung). */
+    limit?: number | null;
+    /** How many items to run concurrently. Default 3, bounded. */
+    concurrency?: number;
+  };
+
+/**
+ * Live batched dispatch: plan + execute many states with the lane's batch
+ * discipline (5 → 10 → All via `limit`). A failure on one item is isolated
+ * to that item's report and never aborts the batch.
+ */
+export async function runDispatchBatch(
+  items: BatchItemLike[],
+  opts: RunBatchOptions = {},
+): Promise<BatchReport> {
+  const run = opts.classifyFn ?? classify;
+  const limit = opts.limit === null ? items.length : (opts.limit ?? BATCH_LADDER[0]);
+  const scoped = items.slice(0, Math.max(0, Math.min(limit, items.length)));
+  const concurrency = Math.min(Math.max(1, opts.concurrency ?? 3), scoped.length || 1);
+
+  const reports: (BatchItemReport | undefined)[] = new Array(scoped.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const i = cursor++;
+      if (i >= scoped.length) return;
+      const item = scoped[i];
+      const report: BatchItemReport = {
+        id: item.id,
+        state: item.state,
+        records: [],
+        executed: 0,
+        held: 0,
+      };
+      try {
+        const plan = await planDispatch(item.state, { ...opts, classifyFn: run });
+        report.plan = {
+          calls: plan.calls,
+          model: plan.model,
+          provider: plan.provider,
+          usage: plan.usage,
+        };
+        report.records = executePlan(plan, opts);
+        report.executed = report.records.filter((r) => r.status === "executed").length;
+        report.held = report.records.filter((r) => r.status === "held").length;
+      } catch (err) {
+        report.error = err instanceof Error ? err.message : "dispatch failed";
+      }
+      reports[i] = report;
+    }
+  }
+  await Promise.all(
+    Array.from({ length: concurrency }, () => worker()),
+  );
+
+  const totals = {
+    items: scoped.length,
+    planned: 0,
+    executed: 0,
+    held: 0,
+    errors: 0,
+    usage: { input_tokens: 0, output_tokens: 0 } as Usage,
+  };
+  let model = "";
+  let provider: Provider = "gateway";
+  for (const r of reports.filter((x): x is BatchItemReport => !!x)) {
+    totals.planned += r.plan?.calls.length ?? 0;
+    totals.executed += r.executed;
+    totals.held += r.held;
+    if (r.error) totals.errors += 1;
+    if (r.plan) {
+      totals.usage.input_tokens += r.plan.usage.input_tokens;
+      totals.usage.output_tokens += r.plan.usage.output_tokens;
+      model = r.plan.model;
+      provider = r.plan.provider;
+    }
+  }
+
+  return {
+    items: reports.filter((x): x is BatchItemReport => !!x),
+    totals,
+    execGate: opts.execGate ?? DEFAULT_EXEC_GATE,
+    model,
+    provider,
+  };
+}
+
+type BatchItemLike = { id: string; state: string };

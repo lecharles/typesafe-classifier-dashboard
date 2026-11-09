@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { planDispatch } from "@/lib/dispatch";
+import { planDispatch, executePlan } from "@/lib/dispatch";
 import { GatewayError } from "@/lib/gateway";
 import { JevError } from "@/lib/jev";
 
@@ -10,6 +10,9 @@ export const maxDuration = 120;
 const body = z.object({
   state: z.string().min(1).max(20_000),
   gate: z.number().min(0).max(1).optional(),
+  /** UC#1-live: also EXECUTE the plan in code, with its own confidence gate. */
+  execute: z.boolean().optional(),
+  execGate: z.number().min(0).max(1).optional(),
   dev: z.boolean().optional(),
 });
 
@@ -29,7 +32,11 @@ export async function POST(req: Request) {
       gate: parsed.data.gate,
       trace: parsed.data.dev,
     });
-    return NextResponse.json(plan);
+    if (!parsed.data.execute) {
+      return NextResponse.json(plan);
+    }
+    const records = executePlan(plan, { execGate: parsed.data.execGate });
+    return NextResponse.json({ ...plan, records });
   } catch (err) {
     const status = err instanceof GatewayError || err instanceof JevError ? 502 : 500;
     const message = err instanceof Error ? err.message : "dispatch failed";
