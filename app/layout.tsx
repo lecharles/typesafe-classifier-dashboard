@@ -11,6 +11,8 @@ const nav = [
   { href: "/playground", label: "Playground" },
   { href: "/emails", label: "Email triage" },
   { href: "/youtube", label: "YouTube analyzer" },
+  { href: "/dispatch", label: "Tool dispatcher" },
+  { href: "/router", label: "Model router" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

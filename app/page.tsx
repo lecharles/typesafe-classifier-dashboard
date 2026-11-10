@@ -25,6 +25,12 @@ const cards = [
     title: "Tool dispatcher",
     body: "UC#1 scaffold: a 5-function registry where every argument is a Jev Choice. Plan side-effect-free tool calls from any state.",
   },
+  {
+    href: "/router",
+    num: "Level 5",
+    title: "Model router",
+    body: "UC#2: intent (Choice) + difficulty (Score) + risk (Noul) decide cheap vs frontier model in code, with batch discipline and estimated cost savings.",
+  },
 ];
 
 export default function Home() {
