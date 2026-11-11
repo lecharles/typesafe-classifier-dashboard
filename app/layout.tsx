@@ -13,6 +13,7 @@ const nav = [
   { href: "/youtube", label: "YouTube analyzer" },
   { href: "/dispatch", label: "Tool dispatcher" },
   { href: "/router", label: "Model router" },
+  { href: "/guardrails", label: "Guardrails" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

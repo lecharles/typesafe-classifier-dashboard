@@ -31,6 +31,12 @@ const cards = [
     title: "Model router",
     body: "UC#2: intent (Choice) + difficulty (Score) + risk (Noul) decide cheap vs frontier model in code, with batch discipline and estimated cost savings.",
   },
+  {
+    href: "/guardrails",
+    num: "Level 6",
+    title: "LLM guardrails",
+    body: "UC#3: screen messages in and out of any LLM app — category (Choice) + severity (Score) + risk Noul decide pass / review / block in code.",
+  },
 ];
 
 export default function Home() {
