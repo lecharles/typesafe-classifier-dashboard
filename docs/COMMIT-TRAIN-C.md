@@ -16,8 +16,13 @@ Notes:
 | UC#1 | Tool-call dispatcher scaffold (5-function registry, Choice-per-arg) | SHIPPED | 15d21bb | 2026-11-08 |
 | UC#1-live | Dispatcher live: batches 5→10→All + confidence-gated execution in code (exec gate 0.85, registry re-check, simulated audit effects) | SHIPPED | a1520c3 | 2026-11-09 |
 | UC#2 | Model router dashboard: intent (Choice) + difficulty (Score) + risk (Noul) → cheap/mid/frontier decided in code; gates as sliders; batch 5→10→All; savings-vs-all-frontier costing; /router + /api/router + /api/router-batch, Level-5 home card + nav | SHIPPED | 4b17b3d | 2026-11-10 |
+| UC#3 | LLM guardrails (screen-in / screen-out): category (Choice) + severity (Score) + jailbreak/leak (Noul) → pass/review/block decided in code; category & disposition floors, severity ladder, jailbreak + leak Noul floors, low-confidence escalation; /guardrails + /api/guardrails + /api/guardrails-batch, Level-6 home card + nav | SHIPPED | 8f684b1 | 2026-11-11 |
 
 Notes:
+- 154 tests green (30 new in lib/__tests__/guardrails.test.ts); tsc clean; :8094 200; guardrails strings confirmed in `.next/static/chunks/app/guardrails/page-*.js` (home is prerendered — Level-6 card verified in the server chunks, which is why the client home chunk grep is empty).
+- Calendar pull-forward, no swap: the 11-11 row (UC#2) was already burned on 11-10, so this run ships the 11-12 row (UC#3) on 11-11. Queue stays one day ahead; nothing dark.
+- Guardrails verdicts are code-side rule ladders (category/disposition floor → severity ladder → jailbreak/leak floor → confidence bump) — an uncertain screen never passes silently, and declared-block categories can't be talked down by a low score. Errors isolated per batch item; demo corpus is `data/exchanges.ts` (synthetic, 12 exchanges).
+- Next queued: UC#4 citation checker + UC#5 RAG re-ranker (11-13 on the calendar; one day ahead means it ships 11-12).
 - 124 tests green (20 new in lib/__tests__/router.test.ts); tsc clean; :8094 200; router strings confirmed in `.next/static/chunks/app/router/page-*.js`.
 - Calendar pull-forward, no swap: the 11-10 row (UC#1-live) was already burned on 11-09, so this run ships the 11-11 row (UC#2) on 11-10. Queue is one day ahead; nothing dark.
 - Router decisions are code-side rule ladders (risk floor → frontier; difficulty ladder; code-intent floor; low-confidence bump) — never a free-model write. Errors isolated per batch item.
