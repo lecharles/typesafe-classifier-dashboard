@@ -14,6 +14,8 @@ const nav = [
   { href: "/dispatch", label: "Tool dispatcher" },
   { href: "/router", label: "Model router" },
   { href: "/guardrails", label: "Guardrails" },
+  { href: "/citations", label: "Citations" },
+  { href: "/rerank", label: "Re-ranker" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

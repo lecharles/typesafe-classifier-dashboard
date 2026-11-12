@@ -37,6 +37,18 @@ const cards = [
     title: "LLM guardrails",
     body: "UC#3: screen messages in and out of any LLM app — category (Choice) + severity (Score) + risk Noul decide pass / review / block in code.",
   },
+  {
+    href: "/citations",
+    num: "Level 7",
+    title: "Citation checker",
+    body: "UC#4: does the quote support the claim? support (Choice) + specificity (Score) + fabrication Noul decide pass / review / flag in code.",
+  },
+  {
+    href: "/rerank",
+    num: "Level 8",
+    title: "RAG re-ranker",
+    body: "UC#5: relevance (Score) + grounding (Choice) + conflict Noul pick, in code, which retrieved passages reach the answering model — ship / bench / drop with a top-k cut.",
+  },
 ];
 
 export default function Home() {
