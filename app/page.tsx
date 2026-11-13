@@ -49,6 +49,12 @@ const cards = [
     title: "RAG re-ranker",
     body: "UC#5: relevance (Score) + grounding (Choice) + conflict Noul pick, in code, which retrieved passages reach the answering model — ship / bench / drop with a top-k cut.",
   },
+  {
+    href: "/harness",
+    num: "Level 9",
+    title: "Emulated vs Jev harness",
+    body: "D14: the same state through the real Jev API and the emulated gateway, side by side — per-question agreement decided in code across the email + YouTube corpora.",
+  },
 ];
 
 export default function Home() {
