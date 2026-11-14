@@ -55,6 +55,12 @@ const cards = [
     title: "Emulated vs Jev harness",
     body: "D14: the same state through the real Jev API and the emulated gateway, side by side — per-question agreement decided in code across the email + YouTube corpora.",
   },
+  {
+    href: "/memory",
+    num: "Level 10",
+    title: "Memory curator",
+    body: "UC#6: which requests/answers are worth remembering? reuse (Score) + durability & PII (Noul) decide keep / review / forget in code — private data is never persisted.",
+  },
 ];
 
 export default function Home() {
