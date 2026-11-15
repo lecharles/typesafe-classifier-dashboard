@@ -5,12 +5,14 @@ import {
   DEFAULT_GATES,
   MEMBERSHIP,
   REUSE_LEVELS,
+  type MemoryBatchItem,
   type MemoryGates,
   type MemorySignals,
   type Membership,
   type MembershipDecision,
   membershipBadgeClass,
 } from "@/lib/memory";
+import { memoryCandidates } from "@/data/memory-candidates";
 import { ConfidenceBadge } from "@/components/charts/ConfidenceBadge";
 
 type CurateResponse = {
@@ -24,11 +26,64 @@ type CurateResponse = {
   error?: string;
 };
 
+type BatchResponse = {
+  items: MemoryBatchItem[];
+  totals: {
+    candidates: number;
+    errors: number;
+    verdicts: Record<Membership, number>;
+    usage: { input_tokens: number; output_tokens: number };
+  };
+  gates: MemoryGates;
+  model: string;
+  provider: string;
+  error?: string;
+};
+
 function MembershipBadge({ membership }: { membership: Membership }) {
   return (
     <span className={`badge ${membershipBadgeClass(membership)}`}>
       {membership.toUpperCase()}
     </span>
+  );
+}
+
+function reuseName(r: number): string {
+  return REUSE_LEVELS[Math.min(REUSE_LEVELS.length - 1, Math.floor(r))] ?? "?";
+}
+
+function CandidateRow({ item }: { item: MemoryBatchItem }) {
+  return (
+    <div style={{ marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(154,164,184,.12)" }}>
+      <div className="row between">
+        <span className="mono" style={{ fontSize: 12 }}>
+          <strong>{item.id}</strong> {item.request.slice(0, 64)}
+          {item.request.length > 64 ? "…" : ""}
+        </span>
+        {item.error ? (
+          <span className="badge bad">error</span>
+        ) : item.membership ? (
+          <MembershipBadge membership={item.membership} />
+        ) : null}
+      </div>
+      {item.signals && (
+        <div className="row" style={{ gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+          <span className="badge neutral">
+            reuse: {item.signals.reuse.toFixed(1)} ({reuseName(item.signals.reuse)})
+          </span>
+          <span className="badge neutral">durable: {item.signals.durable.toFixed(2)}</span>
+          <span className="badge neutral">pii: {item.signals.pii.toFixed(2)}</span>
+        </div>
+      )}
+      {item.error && <div className="muted" style={{ fontSize: 12 }}>{item.error}</div>}
+      {item.reasons && item.reasons.length > 0 && (
+        <ul className="muted" style={{ fontSize: 11.5, margin: "6px 0 0", paddingLeft: 16 }}>
+          {item.reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -45,6 +100,10 @@ export default function MemoryPage() {
   const [dev, setDev] = useState(false);
 
   const [gates, setGates] = useState<MemoryGates>(DEFAULT_GATES);
+  const [batch, setBatch] = useState<BatchResponse | null>(null);
+  const [batchLimit, setBatchLimit] = useState<number | null>(null);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
 
   useEffect(() => {
@@ -91,15 +150,59 @@ export default function MemoryPage() {
     setGates((g) => ({ ...g, [key]: v }));
   }
 
+  async function runBatch(limit: number | null) {
+    setBatchLoading(true);
+    setBatchError(null);
+    setBatchLimit(limit);
+    const req: Record<string, unknown> = {
+      candidates: memoryCandidates.map((c) => ({
+        id: c.id,
+        request: c.request,
+        ...(c.answer ? { answer: c.answer } : {}),
+      })),
+      gates,
+      ...(limit === null ? { limit: null } : { limit }),
+    };
+    try {
+      const res = await fetch("/api/memory-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      const data: BatchResponse = await res.json();
+      if (!res.ok) throw new Error(data.error || "memory batch failed");
+      setBatch(data);
+      setBatchLimit(data.totals.candidates);
+      setRaw((prev) =>
+        JSON.stringify(
+          {
+            ...(prev ? JSON.parse(prev) : {}),
+            batch: {
+              request: { ...req, candidates: `${memoryCandidates.length} candidates` },
+              response: data,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+    } catch (e) {
+      setBatchError(e instanceof Error ? e.message : "failed");
+      setBatch(null);
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
   const s = result?.signals;
 
   return (
     <div>
       <h1>Memory curator</h1>
       <p className="subtitle">
-        UC#6 scaffold · which requests/answers are worth remembering — reuse
+        UC#6 live · which requests/answers are worth remembering — reuse
         (Score) + durability &amp; PII (Noul) decide keep / review / forget in
-        CODE · batch discipline 5 → 10 → All lands with the live row
+        CODE · batch discipline 5 → 10 → All over the candidate corpus
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -201,15 +304,57 @@ export default function MemoryPage() {
 
           <div className="card" style={{ marginTop: 16 }}>
             <div className="row between" style={{ marginBottom: 8 }}>
-              <strong>Scaffold note</strong>
-              <span className="muted" style={{ fontSize: 12 }}>UC#6 live · 11-16 row</span>
+              <strong>Batch discipline · candidate ladder</strong>
+              <span className="muted" style={{ fontSize: 12 }}>
+                {memoryCandidates.length} memory candidates · 5 → 10 → All
+              </span>
             </div>
-            <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-              The ladder is shipped and live on a single exchange. The 11-16 row adds
-              the lane&apos;s batch discipline — 5 → 10 → All over a memory-candidate
-              corpus with verdict tallies ({MEMBERSHIP.join(" / ")}) and the dev view
-              wired in, same as router / guardrails / citations / re-ranker.
-            </p>
+            <div className="row" style={{ gap: 8 }}>
+              <button onClick={() => runBatch(5)} disabled={batchLoading}>
+                {batchLoading && batchLimit === 5 ? "Running 5…" : "Run batch 5"}
+              </button>
+              <button onClick={() => runBatch(10)} disabled={batchLoading}>
+                {batchLoading && batchLimit === 10 ? "Running 10…" : "Expand to 10"}
+              </button>
+              <button onClick={() => runBatch(null)} disabled={batchLoading}>
+                {batchLoading && batchLimit === null ? "Running all…" : "Run All"}
+              </button>
+            </div>
+            {batchError && <div className="error-banner" style={{ marginTop: 10 }}>{batchError}</div>}
+            {batch && (
+              <>
+                <div className="grid cols-3" style={{ marginTop: 12, gap: 10 }}>
+                  {MEMBERSHIP.map((m) => (
+                    <div key={m} className="stat-tile">
+                      <div className="label">membership: {m}</div>
+                      <div className="value">
+                        <span className={`badge ${membershipBadgeClass(m)}`}>
+                          {batch.totals.verdicts[m]}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="row between" style={{ margin: "12px 0", fontSize: 13 }}>
+                  <span>
+                    <span className="badge good">{batch.totals.candidates} candidates</span>{" "}
+                    <span className="muted mono" style={{ fontSize: 12 }}>
+                      {batch.totals.usage.input_tokens}↑ {batch.totals.usage.output_tokens}↓ tok
+                    </span>{" "}
+                    {batch.totals.errors > 0 && (
+                      <span className="badge bad">{batch.totals.errors} errors</span>
+                    )}
+                  </span>
+                  <span className="muted mono" style={{ fontSize: 12 }}>
+                    gates keep≥{batch.gates.keepAt} forget≤{batch.gates.forgetAt} · pii{" "}
+                    {batch.gates.piiBlockAt.toFixed(2)}
+                  </span>
+                </div>
+                {batch.items.map((it) => (
+                  <CandidateRow key={it.id} item={it} />
+                ))}
+              </>
+            )}
           </div>
         </div>
 

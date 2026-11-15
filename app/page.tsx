@@ -59,7 +59,7 @@ const cards = [
     href: "/memory",
     num: "Level 10",
     title: "Memory curator",
-    body: "UC#6: which requests/answers are worth remembering? reuse (Score) + durability & PII (Noul) decide keep / review / forget in code — private data is never persisted.",
+    body: "UC#6 live: which requests/answers are worth remembering? reuse (Score) + durability & PII (Noul) decide keep / review / forget in code — batch ladder 5 → 10 → All, private data never persisted.",
   },
 ];
 

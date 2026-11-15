@@ -1,4 +1,5 @@
 import { classify } from "@/lib/classify";
+import { BATCH_LADDER } from "@/lib/dispatch";
 import type { ClassifyResult, Provider, Question, Usage } from "@/lib/schema";
 
 /**
@@ -20,8 +21,10 @@ import type { ClassifyResult, Provider, Question, Usage } from "@/lib/schema";
  * reusable it is, and an uncertain candidate is never KEPT silently — it
  * is demoted to the human queue, never escalated to a destructive forget.
  *
- * 11-16 (UC#6 memory curator live) adds the batch discipline 5 → 10 → All
- * over a memory-candidate corpus, same ladder as every "after D14" row.
+ * 11-16 (UC#6 memory curator live, shipped 11-15 one day ahead) added the
+ * batch discipline 5 → 10 → All over the memory-candidate corpus
+ * (data/memory-candidates.ts), per-candidate error isolation, and the
+ * keep / review / forget tallies — same ladder as every other dashboard.
  */
 
 /* ------------------------------------------------------------------ *
@@ -300,5 +303,136 @@ export async function curateExchange(
     provider: res.provider,
     usage: res.usage,
     ...(opts.trace && res.trace ? { trace: res.trace } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Batched curation with the lane's 5 → 10 → All discipline. The unit
+ * of the ladder here is the memory CANDIDATE: curate the first 5,
+ * widen to 10, then All — exactly the discipline every other
+ * dashboard uses. 11-16 row (UC#6 memory curator live).
+ * ------------------------------------------------------------------ */
+
+export type MemoryCandidateIn = {
+  id: string;
+  request: string;
+  answer?: string;
+};
+
+export type MemoryBatchItem = {
+  id: string;
+  request: string;
+  answer?: string;
+  signals?: MemorySignals;
+  membership?: Membership;
+  reasons?: string[];
+  usage?: Usage;
+  error?: string;
+};
+
+export type MemoryTotals = {
+  candidates: number;
+  errors: number;
+  verdicts: Record<Membership, number>;
+  usage: Usage;
+};
+
+export type MemoryBatchReport = {
+  items: MemoryBatchItem[];
+  totals: MemoryTotals;
+  gates: MemoryGates;
+  model: string;
+  provider: Provider;
+};
+
+export type RunMemoryBatchOptions = {
+  classifyFn?: typeof classify;
+  gates?: Partial<MemoryGates>;
+  /** Cap on candidates processed; null = All. Default 5 (first ladder rung). */
+  limit?: number | null;
+  concurrency?: number;
+};
+
+/**
+ * Curate a corpus of request/answer candidates. A failure on one
+ * candidate is isolated to that candidate's report and never aborts the
+ * batch (same contract as the citations and rerank batches). Verdicts
+ * stay code-side per candidate — the ladder is identical to the live
+ * single-exchange path.
+ */
+export async function runMemoryBatch(
+  candidates: MemoryCandidateIn[],
+  opts: RunMemoryBatchOptions = {},
+): Promise<MemoryBatchReport> {
+  const run = opts.classifyFn ?? classify;
+  const gates = normalizeGates(opts.gates);
+  const limit =
+    opts.limit === null ? candidates.length : (opts.limit ?? BATCH_LADDER[0]);
+  const scoped = candidates.slice(
+    0,
+    Math.max(0, Math.min(limit, candidates.length)),
+  );
+  const concurrency = Math.min(
+    Math.max(1, opts.concurrency ?? 3),
+    scoped.length || 1,
+  );
+
+  const reports: (MemoryBatchItem | undefined)[] = new Array(scoped.length);
+  let cursor = 0;
+  let classifierModel = "";
+  let classifierProvider: Provider = "gateway";
+
+  async function worker() {
+    while (true) {
+      const i = cursor++;
+      if (i >= scoped.length) return;
+      const c = scoped[i];
+      const report: MemoryBatchItem = { id: c.id, request: c.request };
+      if (c.answer && c.answer.trim().length > 0) report.answer = c.answer.trim();
+      try {
+        const cur = await curateExchange(c.request, c.answer, {
+          classifyFn: run,
+          gates,
+        });
+        report.membership = cur.decision.membership;
+        report.reasons = cur.decision.reasons;
+        report.signals = cur.signals;
+        report.usage = cur.usage;
+        classifierModel = cur.model;
+        classifierProvider = cur.provider;
+      } catch (err) {
+        report.error =
+          err instanceof Error ? err.message : "memory curation failed";
+      }
+      reports[i] = report;
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+  const verdicts: Record<Membership, number> = { keep: 0, review: 0, forget: 0 };
+  const totals: MemoryTotals = {
+    candidates: scoped.length,
+    errors: 0,
+    verdicts,
+    usage: { input_tokens: 0, output_tokens: 0 },
+  };
+  for (const r of reports.filter((x): x is MemoryBatchItem => !!x)) {
+    if (r.error) {
+      totals.errors += 1;
+      continue;
+    }
+    if (r.membership) totals.verdicts[r.membership] += 1;
+    if (r.usage) {
+      totals.usage.input_tokens += r.usage.input_tokens;
+      totals.usage.output_tokens += r.usage.output_tokens;
+    }
+  }
+
+  return {
+    items: reports.filter((x): x is MemoryBatchItem => !!x),
+    totals,
+    gates,
+    model: classifierModel,
+    provider: classifierProvider,
   };
 }
