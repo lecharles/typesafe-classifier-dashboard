@@ -61,6 +61,12 @@ const cards = [
     title: "Memory curator",
     body: "UC#6 live: which requests/answers are worth remembering? reuse (Score) + durability & PII (Noul) decide keep / review / forget in code — batch ladder 5 → 10 → All, private data never persisted.",
   },
+  {
+    href: "/bs",
+    num: "Level 11",
+    title: "Internet BS detector",
+    body: "UC#7: email spam + YouTube clickbait unified into ONE pipeline — intensity (Score) + malice & payoff (Noul) decide clean / suspicious / bs in code, batched 5 → 10 → All over the merged 90-item corpus with per-source tallies.",
+  },
 ];
 
 export default function Home() {
