@@ -1,5 +1,6 @@
 import { classify } from "@/lib/classify";
 import { BATCH_LADDER } from "@/lib/dispatch";
+import type { ExportRow } from "@/lib/export";
 import { emailState, videoState } from "@/lib/harness";
 import { emails } from "@/data/emails";
 import { videos } from "@/data/youtube";
@@ -480,4 +481,91 @@ export async function runBsBatch(
     model: classifierModel,
     provider: classifierProvider,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * The ranked BS leaderboard (11-18 row): the merged corpus ranked
+ * WORST FIRST by verdict band, then intensity — and exportable
+ * through the D8 CSV/JSON pipeline (lib/export.ts + ExportButtons).
+ * ------------------------------------------------------------------ */
+
+export type BsLeaderboardRow = {
+  /** 1 = the worst piece of internet junk in the stream */
+  rank: number;
+  id: string;
+  source: BsSource;
+  label: string;
+  verdict: BsVerdict;
+  /** one sortable number: verdict band ×10 + intensity — the band ALWAYS dominates, so a clean never outranks bait */
+  score: number;
+  intensity: number;
+  malice: number;
+  payoff: number;
+  confidence: number;
+};
+
+export type BsLeaderboard = {
+  rows: BsLeaderboardRow[];
+  /** items with no verdict (per-item failures) are excluded from the ranking, never silently dropped */
+  failed: number;
+};
+
+/**
+ * The leaderboard number. Bands are 10 apart and intensity lives in
+ * [0, 5), so the order is exactly BS_VERDICTS — a bs at intensity 0
+ * outranks a suspicious at full tilt. Decided in code, no model write.
+ */
+export function bsLeaderboardScore(verdict: BsVerdict, intensity: number): number {
+  return BS_RANK[verdict] * 10 + intensity;
+}
+
+/**
+ * Rank batch items worst first: score desc → malice desc (ties inside
+ * a band) → id asc as the final deterministic tiebreaker. Items that
+ * errored (no verdict) drop out and are COUNTED in `failed`. Same
+ * input, same order, every time.
+ */
+export function rankBsLeaderboard(items: BsBatchItem[]): BsLeaderboard {
+  const screened = items.filter(
+    (x): x is BsBatchItem & { verdict: BsVerdict; signals: BsSignals } =>
+      !!x.verdict && !!x.signals,
+  );
+  const scored = screened.map((x) => ({
+    id: x.id,
+    source: x.source,
+    label: x.label,
+    verdict: x.verdict,
+    intensity: x.signals.bs,
+    malice: x.signals.malice,
+    payoff: x.signals.payoff,
+    confidence: x.signals.confidence,
+    score: bsLeaderboardScore(x.verdict, x.signals.bs),
+  }));
+  scored.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    if (a.malice !== b.malice) return b.malice - a.malice;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return {
+    rows: scored.map((r, i) => ({ rank: i + 1, ...r })),
+    failed: items.length - scored.length,
+  };
+}
+
+const round3 = (n: number) => Number(n.toFixed(3));
+
+/** Flatten leaderboard rows for the D8 export pipeline (stable column order). */
+export function bsLeaderboardExportRows(rows: BsLeaderboardRow[]): ExportRow[] {
+  return rows.map((r) => ({
+    rank: r.rank,
+    id: r.id,
+    source: r.source,
+    label: r.label,
+    verdict: r.verdict,
+    score: round3(r.score),
+    intensity: round3(r.intensity),
+    malice: round3(r.malice),
+    payoff: round3(r.payoff),
+    confidence: round3(r.confidence),
+  }));
 }

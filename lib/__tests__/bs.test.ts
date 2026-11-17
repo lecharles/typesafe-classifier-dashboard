@@ -6,17 +6,23 @@ import {
   BS_SOURCES,
   BS_VERDICTS,
   DEFAULT_GATES,
+  bsLeaderboardExportRows,
+  bsLeaderboardScore,
   buildBsCorpus,
   bsBadgeClass,
   bsQuestions,
   decideBsVerdict,
   normalizeGates,
+  rankBsLeaderboard,
   runBsBatch,
   screenBsItem,
   signalsFrom,
+  type BsBatchItem,
   type BsGates,
   type BsSignals,
+  type BsVerdict,
 } from "@/lib/bs";
+import { toCSV, toJSON } from "@/lib/export";
 import { emails } from "@/data/emails";
 import { videos } from "@/data/youtube";
 import type { Answer, ClassifyResult } from "@/lib/schema";
@@ -417,5 +423,183 @@ describe("UC#7 runBsBatch (merged ladder 5 → 10 → All + per-source tallies)"
     expect(report.items).toEqual([]);
     expect(report.totals.verdicts).toEqual({ clean: 0, suspicious: 0, bs: 0 });
     expect(report.totals.bySource.email).toEqual({ clean: 0, suspicious: 0, bs: 0 });
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * UC#7 (11-18 row, shipped one day ahead): ranked BS leaderboard +
+ * export through the D8 CSV/JSON pipeline.
+ * ------------------------------------------------------------------ */
+
+describe("UC#7 ranked BS leaderboard + D8 export", () => {
+  const lbItem = (
+    id: string,
+    source: "email" | "video",
+    label: string,
+    verdict?: BsVerdict,
+    over: Partial<BsSignals> = {},
+    error?: string,
+  ): BsBatchItem => ({
+    id,
+    source,
+    label,
+    ...(verdict
+      ? { verdict, signals: sig(over), reasons: [`BS verdict: ${verdict}`] }
+      : {}),
+    ...(error ? { error } : {}),
+  });
+
+  it("the score band ALWAYS dominates: any bs outranks any suspicious, any suspicious outranks any clean", () => {
+    expect(bsLeaderboardScore("bs", 0)).toBeGreaterThan(bsLeaderboardScore("suspicious", 4.99));
+    expect(bsLeaderboardScore("suspicious", 0)).toBeGreaterThan(bsLeaderboardScore("clean", 4.99));
+    expect(bsLeaderboardScore("clean", 0)).toBe(0);
+    expect(bsLeaderboardScore("bs", 4)).toBe(24);
+    // score equals rank ×10 + intensity — bands are 10 apart, intensity lives in [0,5)
+    for (const v of BS_VERDICTS) {
+      expect(bsLeaderboardScore(v, 2.5)).toBe(BS_RANK[v] * 10 + 2.5);
+    }
+  });
+
+  it("ranks the merged stream WORST FIRST: verdict band, then intensity", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("c1", "email", "honest note", "clean", { bs: 0.5 }),
+      lbItem("x1", "video", "FREE IPHONE!!", "bs", { bs: 4 }),
+      lbItem("s1", "email", "mild puffery", "suspicious", { bs: 2 }),
+      lbItem("x2", "video", "verify your password", "bs", { bs: 3.6 }),
+      lbItem("c2", "email", "meeting recap", "clean", { bs: 0 }),
+    ]);
+    expect(lb.rows.map((r) => r.id)).toEqual(["x1", "x2", "s1", "c1", "c2"]);
+    expect(lb.rows.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5]);
+    // a malice-floor bs at low intensity still sits under a blatant one, above all bait-adjacent
+    expect(lb.rows[0].verdict).toBe("bs");
+    expect(lb.rows[3].verdict).toBe("clean");
+  });
+
+  it("tiebreaks inside one score: higher malice first, then id ascending — total order, no vibes", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("z9", "video", "bait A", "suspicious", { bs: 2, malice: 0.1 }),
+      lbItem("a1", "video", "bait B", "suspicious", { bs: 2, malice: 0.4 }),
+      lbItem("m2", "email", "tie X", "clean", { bs: 0.5, malice: 0.02 }),
+      lbItem("m1", "email", "tie Y", "clean", { bs: 0.5, malice: 0.02 }),
+    ]);
+    expect(lb.rows.map((r) => r.id)).toEqual(["a1", "z9", "m1", "m2"]);
+  });
+
+  it("failed items are EXCLUDED and COUNTED, never silently dropped and never ranked", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("ok1", "email", "fine", "bs", { bs: 4 }),
+      lbItem("boom", "video", "gateway died", undefined, {}, "gateway down for boom"),
+      lbItem("ok2", "email", "fine", "clean", { bs: 0.5 }),
+    ]);
+    expect(lb.rows).toHaveLength(2);
+    expect(lb.failed).toBe(1);
+    expect(lb.rows.map((r) => r.id)).toEqual(["ok1", "ok2"]);
+    expect(lb.rows.every((r) => r.verdict)).toBe(true);
+  });
+
+  it("empty batch is an empty leaderboard, not a crash", () => {
+    const lb = rankBsLeaderboard([]);
+    expect(lb.rows).toEqual([]);
+    expect(lb.failed).toBe(0);
+  });
+
+  it("ranking is deterministic: same input, and reordered input, yield the same worst-first stream", () => {
+    const items = [
+      lbItem("e1", "email", "a", "suspicious", { bs: 2.5, malice: 0.3 }),
+      lbItem("v1", "video", "b", "bs", { bs: 4, malice: 0.9 }),
+      lbItem("e2", "email", "c", "clean", { bs: 0.5, malice: 0.01 }),
+      lbItem("v2", "video", "d", "suspicious", { bs: 2.5, malice: 0.3 }),
+    ];
+    const once = rankBsLeaderboard(items).rows.map((r) => r.id);
+    const twice = rankBsLeaderboard([...items].reverse()).rows.map((r) => r.id);
+    expect(twice).toEqual(once);
+    expect(once).toEqual(["v1", "e1", "v2", "e2"]);
+  });
+
+  it("rows carry source/label/signals for the leaderboard table", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("v1", "video", "YOU WONTHISE?", "bs", { bs: 4, malice: 0.85, payoff: 0.1, confidence: 0.95 }),
+    ]);
+    const r = lb.rows[0];
+    expect(r.source).toBe("video");
+    expect(r.label).toBe("YOU WONTHISE?");
+    expect(r.intensity).toBe(4);
+    expect(r.malice).toBe(0.85);
+    expect(r.payoff).toBe(0.1);
+    expect(r.confidence).toBe(0.95);
+    expect(r.score).toBeCloseTo(24, 6);
+  });
+
+  it("export rows ride the D8 shape: stable column order, numbers rounded to 3 dp", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("x1", "email", "bait", "suspicious", { bs: 2.0333, malice: 1 / 3, payoff: 0.66667, confidence: 0.5762 }),
+    ]);
+    const rows = bsLeaderboardExportRows(lb.rows);
+    expect(Object.keys(rows[0])).toEqual([
+      "rank", "id", "source", "label", "verdict",
+      "score", "intensity", "malice", "payoff", "confidence",
+    ]);
+    expect(rows[0].rank).toBe(1);
+    expect(rows[0].intensity).toBe(2.033);
+    expect(rows[0].malice).toBe(0.333);
+    expect(rows[0].payoff).toBe(0.667);
+    expect(rows[0].confidence).toBe(0.576);
+  });
+
+  it("toCSV of the leaderboard: header + one row per ranked item, quote/comma-safe labels", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("x1", "email", 'Win a FREE iPhone, "guaranteed"', "bs", { bs: 4, malice: 0.9 }),
+      lbItem("c1", "video", "quiet tutorial", "clean", { bs: 0.5 }),
+    ]);
+    const csv = toCSV(bsLeaderboardExportRows(lb.rows));
+    const lines = csv.split("\r\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe("rank,id,source,label,verdict,score,intensity,malice,payoff,confidence");
+    expect(lines[1]).toContain("24"); // bs band score in row order
+    expect(lines[1]).toContain('"Win a FREE iPhone, ""guaranteed"""'); // RFC-style escaping
+    expect(lines[2].startsWith("2,c1,video")).toBe(true);
+  });
+
+  it("toJSON round-trips the ranked stream unchanged", () => {
+    const lb = rankBsLeaderboard([
+      lbItem("x1", "video", "blatant", "bs", { bs: 3.5, malice: 0.7 }),
+      lbItem("s1", "email", "bait-adjacent", "suspicious", { bs: 2 }),
+    ]);
+    const rows = bsLeaderboardExportRows(lb.rows);
+    expect(JSON.parse(toJSON(rows))).toEqual(rows);
+  });
+
+  it("end-to-end: a batch run → leaderboard → export keeps worst-first order through the D8 pipeline", async () => {
+    const corpus = [
+      { id: "e1", source: "email" as const, state: "honest support email" },
+      { id: "v1", source: "video" as const, state: "clickbait title, straight description" },
+      { id: "e2", source: "email" as const, state: "phish: send your card number to claim prize" },
+      { id: "e3", source: "email" as const, state: "boom item" },
+    ];
+    const classifyFn = (async (req: { state: string }) => {
+      if (req.state.includes("boom")) throw new Error("gateway down for e3");
+      if (req.state.includes("phish")) {
+        return fakeResult(bsAnswers({ bs: score(0.5, 0.95), malice: noul(0.95) }));
+      }
+      if (req.state.includes("clickbait")) {
+        return fakeResult(bsAnswers({ bs: score(4, 0.95) }));
+      }
+      if (req.state.includes("honest")) {
+        return fakeResult(bsAnswers({ bs: score(0.5, 0.9) }));
+      }
+      return fakeResult(bsAnswers({ bs: score(2, 0.9) }));
+    }) as never;
+
+    const report = await runBsBatch(corpus, { classifyFn, limit: null });
+    const lb = rankBsLeaderboard(report.items);
+    expect(lb.failed).toBe(1); // e3 dropped from ranking, counted
+    const ids = lb.rows.map((r) => r.id);
+    // the two bs (clickbait via ladder at intensity 4, phish via malice floor at 0.5) come first
+    expect(ids[0]).toBe("v1"); // 24 = bs band 2 ×10 + 4
+    expect(ids[1]).toBe("e2"); // 20.5 = bs band + intensity 0.5 — the floor put it here
+    expect(ids[2]).toBe("e1"); // clean
+    const csv = toCSV(bsLeaderboardExportRows(lb.rows));
+    expect(csv.split("\r\n")).toHaveLength(4); // header + 3 ranked
+    expect(csv).toContain("e2,");
   });
 });

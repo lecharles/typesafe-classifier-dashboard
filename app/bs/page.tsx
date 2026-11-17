@@ -5,8 +5,9 @@ import {
   BS_LEVELS,
   BS_SOURCES,
   BS_VERDICTS,
-  buildBsCorpus,
   bsBadgeClass,
+  bsLeaderboardExportRows,
+  buildBsCorpus,
   type BsBatchItem,
   type BsDecision,
   type BsGates,
@@ -14,8 +15,10 @@ import {
   type BsSource,
   type BsVerdict,
   DEFAULT_GATES,
+  rankBsLeaderboard,
 } from "@/lib/bs";
 import { ConfidenceBadge } from "@/components/charts/ConfidenceBadge";
+import { ExportButtons } from "@/components/ExportButtons";
 
 type ScreenResponse = {
   signals?: BsSignals;
@@ -199,6 +202,7 @@ export default function BsPage() {
   }
 
   const s = result?.signals;
+  const leaderboard = batch ? rankBsLeaderboard(batch.items) : null;
 
   return (
     <div>
@@ -206,7 +210,8 @@ export default function BsPage() {
       <p className="subtitle">
         UC#7 · email spam + YouTube clickbait in ONE pipeline — intensity (Score) +
         malice &amp; payoff (Noul) decide clean / suspicious / bs in CODE · merged
-        90-item corpus, batch ladder 5 → 10 → All, tallies per source
+        90-item corpus, batch ladder 5 → 10 → All, tallies per source · ranked
+        worst-first BS leaderboard with CSV/JSON export through the D8 pipeline
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -368,6 +373,58 @@ export default function BsPage() {
               </>
             )}
           </div>
+
+          {leaderboard && leaderboard.rows.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div className="row between" style={{ marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                <strong>Ranked BS leaderboard</strong>
+                <ExportButtons
+                  filename={`bs-leaderboard-${batch?.totals.screened ?? 0}`}
+                  rows={bsLeaderboardExportRows(leaderboard.rows)}
+                />
+              </div>
+              <p className="muted" style={{ fontSize: 12.5, margin: "0 0 10px" }}>
+                the merged stream ranked WORST FIRST — verdict band (bs → suspicious → clean),
+                then intensity, then malice, id as the tiebreaker. {leaderboard.rows.length}{" "}
+                ranked{leaderboard.failed > 0 ? ` · ${leaderboard.failed} failed items excluded, never dropped silently` : ""}{" "}
+                · CSV/JSON ride the D8 export pipeline.
+              </p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>item</th>
+                    <th>verdict</th>
+                    <th>score</th>
+                    <th>intensity</th>
+                    <th>malice</th>
+                    <th>payoff</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="mono">{r.rank}</td>
+                      <td className="mono" style={{ fontSize: 12 }}>
+                        <strong>{r.id}</strong>{" "}
+                        <span title={r.label}>{r.label.slice(0, 48)}{r.label.length > 48 ? "…" : ""}</span>{" "}
+                        <SourceBadge source={r.source} />
+                      </td>
+                      <td>
+                        <BsBadge verdict={r.verdict} />
+                      </td>
+                      <td className="mono">{r.score.toFixed(1)}</td>
+                      <td className="mono">
+                        {r.intensity.toFixed(1)} ({intensityName(r.intensity)})
+                      </td>
+                      <td className="mono">{r.malice.toFixed(2)}</td>
+                      <td className="mono">{r.payoff.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="card">

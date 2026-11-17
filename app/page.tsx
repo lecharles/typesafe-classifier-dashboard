@@ -65,7 +65,7 @@ const cards = [
     href: "/bs",
     num: "Level 11",
     title: "Internet BS detector",
-    body: "UC#7: email spam + YouTube clickbait unified into ONE pipeline — intensity (Score) + malice & payoff (Noul) decide clean / suspicious / bs in code, batched 5 → 10 → All over the merged 90-item corpus with per-source tallies.",
+    body: "UC#7: email spam + YouTube clickbait unified into ONE pipeline — intensity (Score) + malice & payoff (Noul) decide clean / suspicious / bs in code, batched 5 → 10 → All over the merged 90-item corpus with per-source tallies, plus a ranked worst-first leaderboard exported through the D8 CSV/JSON pipeline.",
   },
 ];
 
