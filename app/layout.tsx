@@ -19,6 +19,7 @@ const nav = [
   { href: "/harness", label: "Harness" },
   { href: "/memory", label: "Memory" },
   { href: "/bs", label: "BS detector" },
+  { href: "/extract", label: "Extraction" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

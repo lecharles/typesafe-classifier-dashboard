@@ -67,6 +67,12 @@ const cards = [
     title: "Internet BS detector",
     body: "UC#7: email spam + YouTube clickbait unified into ONE pipeline — intensity (Score) + malice & payoff (Noul) decide clean / suspicious / bs in code, batched 5 → 10 → All over the merged 90-item corpus with per-source tallies, plus a ranked worst-first leaderboard exported through the D8 CSV/JSON pipeline.",
   },
+  {
+    href: "/extract",
+    num: "Level 12",
+    title: "Date/value extractor",
+    body: "UC#8: messy dates and amounts in, canonical values out — CODE detects, validates, and normalizes every token (no Feb 30 ever ships), while kind (Choice) + precision (Score) + ambiguity (Noul) decide resolved / guessed / vague / rejected in code, batched 5 → 10 → All over the messy-snippet corpus.",
+  },
 ];
 
 export default function Home() {
