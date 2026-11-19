@@ -30,6 +30,22 @@ import type { ClassifyResult, Provider, Question, Usage } from "@/lib/schema";
  * rejected). Two safety stories: nothing invalid or unanchored is ever
  * silently normalized, and a value produced by convention ("we read it
  * MM/DD") is always FLAGGED, never shipped clean.
+ *
+ * VALIDATOR v2 (11-20 row, "extraction validation-in-code + tests"):
+ * the day part was real calendar; now the rest of the token is too.
+ *   • the CLOCK — hh/mi/ss are validated, not just shaped. 23:60 and
+ *     25:00 are refused outright; 23:59:60 is the only legal 60th
+ *     second (leap-second form, carried flagged); the end-of-day
+ *     notation 24:00 rolls over to 00:00 of the NEXT day (leap-day and
+ *     year-ends roll correctly) and rides the guessed floor.
+ *   • the OFFSET — UTC offsets are validated (no +24:00) and
+ *     colon-normalized (+0530 → +05:30, flagged).
+ *   • the SEPARATORS — "11/20-2026" mixes / and -: a typo, not a date.
+ *     It is still DETECTED (visible refusal beats invisible drift) and
+ *     rejected by the validator.
+ *   • the CENT — sub-cent money (1.999) is rounded to the nearest cent
+ *     with cent-exact arithmetic and flagged; fractional yen is refused
+ *     because JPY is zero-decimal — no sub-yen money exists to ship.
  */
 
 /* ------------------------------------------------------------------ *
@@ -211,7 +227,16 @@ export type TokenShape =
       ss?: string;
       tz?: string;
     }
-  | { shape: "numeric"; a: number; b: number; y: number; twoDigitYear: boolean }
+  | {
+      shape: "numeric";
+      a: number;
+      b: number;
+      y: number;
+      twoDigitYear: boolean;
+      /** the two separators as written — validator v2 refuses when they differ */
+      sepA?: string;
+      sepB?: string;
+    }
   | { shape: "monthname"; mo: number; d: number; y: number }
   | {
       shape: "relative";
@@ -273,7 +298,7 @@ const REL_TODAY_RE = /\b(today|tonight|tomorrow)\b/gi;
 const REL_NEXTWD_RE =
   /\bnext (week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
 const REL_IN_RE = /\bin (\d{1,3}) (days?|weeks?|months?)\b/gi;
-const NUMERIC_RE = /\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}|\d{2})\b/g;
+const NUMERIC_RE = /\b(\d{1,2})([/.\-])(\d{1,2})([/.\-])(\d{4}|\d{2})\b/g;
 const MONEY_PREFIX_SYM_RE =
   /([$€£¥])\s?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)([kmb])?\b/gi;
 const MONEY_CODE_PREFIX_RE =
@@ -387,9 +412,11 @@ export function detectCandidates(text: string): Detected[] {
   drain(NUMERIC_RE, "date", (m) => ({
     shape: "numeric",
     a: Number(m[1]),
-    b: Number(m[2]),
-    y: Number(m[3]),
-    twoDigitYear: m[3].length === 2,
+    sepA: m[2],
+    b: Number(m[3]),
+    sepB: m[4],
+    y: Number(m[5]),
+    twoDigitYear: m[5].length === 2,
   }));
 
   drain(MONEY_PREFIX_SYM_RE, "money", (m) => ({
@@ -489,17 +516,100 @@ export function normalizeDetected(det: Detected, anchor?: string): Normalized {
     if (!isValidDate(s.y, s.mo, s.d)) {
       return { value: null, parseError: `${det.token} is not a real calendar date` };
     }
-    let value = isoFromParts(s.y, s.mo, s.d);
-    let note: string | undefined;
-    if (s.hh !== undefined && s.mi !== undefined) {
-      value += `T${s.hh}:${s.mi}${s.ss ? `:${s.ss}` : ""}`;
-      if (s.tz) value += s.tz;
-      else note = "time given without a timezone — emitted as written, no offset applied";
+    let day = isoFromParts(s.y, s.mo, s.d);
+
+    if (s.hh === undefined || s.mi === undefined) {
+      return { value: day };
     }
-    return { value, ...(note ? { note } : {}) };
+
+    // Validator v2 — the clock is validated, not just shaped.
+    const hh = Number(s.hh);
+    const mi = Number(s.mi);
+    const ss = s.ss === undefined ? null : Number(s.ss);
+    const notes: string[] = [];
+    let codeFloor: "guessed" | undefined;
+
+    if (hh > 24) {
+      return { value: null, parseError: `${det.token} has an impossible hour on the clock` };
+    }
+    if (mi > 59) {
+      return { value: null, parseError: `${det.token} has an impossible minute on the clock` };
+    }
+    if (ss !== null && ss > 60) {
+      return { value: null, parseError: `${det.token} has an impossible second on the clock` };
+    }
+    if (ss === 60 && !(hh === 23 && mi === 59)) {
+      return {
+        value: null,
+        parseError: `${det.token} writes a 60th second outside the leap-second form 23:59:60`,
+      };
+    }
+
+    let time: string;
+    if (hh === 24) {
+      // "24:00" is the end-of-day notation — the only thing 24 o'clock
+      // can mean is midnight arriving, and it belongs to the NEXT day.
+      if (mi !== 0 || (ss !== null && ss !== 0)) {
+        return {
+          value: null,
+          parseError: `${det.token} writes 24:${s.mi} — the clock only reads 24:00, and only to mean end of day`,
+        };
+      }
+      day = isoDay(new Date(Date.UTC(s.y, s.mo - 1, s.d + 1)));
+      time = `00:00${s.ss !== undefined ? `:${s.ss}` : ""}`;
+      notes.push("'24:00' is end-of-day — normalized to 00:00 of the following day");
+      codeFloor = "guessed";
+    } else {
+      time = `${s.hh}:${s.mi}${s.ss !== undefined ? `:${s.ss}` : ""}`;
+    }
+    if (ss === 60) {
+      notes.push(
+        "leap-second form 23:59:60 carried through as written — it names a real instant only on a published leap second",
+      );
+      codeFloor = "guessed";
+    }
+
+    let value = `${day}T${time}`;
+    if (s.tz) {
+      if (s.tz === "Z") {
+        value += "Z";
+      } else {
+        // Validator v2 — offsets are real hours and minutes too, and
+        // the canonical emitted form always carries the colon.
+        const off = /^([+-])(\d{2}):?(\d{2})$/.exec(s.tz);
+        if (!off || Number(off[2]) > 23 || Number(off[3]) > 59) {
+          return {
+            value: null,
+            parseError: `${det.token} has an impossible UTC offset ${s.tz}`,
+          };
+        }
+        const canon = `${off[1]}${off[2]}:${off[3]}`;
+        if (!s.tz.includes(":")) {
+          notes.push(`UTC offset '${s.tz}' normalized to '${canon}'`);
+          codeFloor = "guessed";
+        }
+        value += canon;
+      }
+    } else {
+      notes.push("time given without a timezone — emitted as written, no offset applied");
+    }
+    return {
+      value,
+      ...(notes.length ? { note: notes.join("; ") } : {}),
+      ...(codeFloor ? { codeFloor } : {}),
+    };
   }
 
   if (s.shape === "numeric") {
+    // Validator v2 — "11/20-2026" mixes separators. That is a typo, not
+    // a date: we DETECT it (a visible refusal beats an invisible miss)
+    // and reject it in code. Uniform separators pass untouched.
+    if (s.sepA && s.sepB && s.sepA !== s.sepB) {
+      return {
+        value: null,
+        parseError: `${det.token} mixes '${s.sepA}' and '${s.sepB}' separators — a typo, not a date`,
+      };
+    }
     const y = s.twoDigitYear ? (s.y < 70 ? 2000 + s.y : 1900 + s.y) : s.y;
     const yearNote = s.twoDigitYear
       ? `two-digit year '${s.y}' expanded to ${y}`
@@ -615,12 +725,34 @@ export function normalizeDetected(det: Detected, anchor?: string): Normalized {
   if (!Number.isFinite(s.amount) || s.amount < 0) {
     return { value: null, parseError: `${det.token} is not a well-formed amount` };
   }
-  const note = s.multiplier
-    ? `magnitude shorthand '${s.multiplier}' applied (×${MULTIPLIER[s.multiplier]})`
-    : undefined;
+  // Validator v2 — JPY is zero-decimal: fractional yen is not money as
+  // written, and code says so out loud instead of shipping a ghost.
+  if (s.currency === "JPY" && !Number.isInteger(s.amount)) {
+    return {
+      value: null,
+      parseError: `${det.token} writes a fractional yen — JPY is zero-decimal, there is no sub-yen money`,
+    };
+  }
+  // Validator v2 — cent-exact rounding. If the text wrote precision
+  // finer than a cent we round to the nearest cent and FLAG it; a value
+  // that quietly changed shape is never shipped clean.
+  const cents = Math.round(s.amount * 100);
+  const subCent = Math.abs(s.amount * 100 - cents) > 1e-6;
+  const moneyNotes: string[] = [];
+  if (s.multiplier) {
+    moneyNotes.push(
+      `magnitude shorthand '${s.multiplier}' applied (×${MULTIPLIER[s.multiplier]})`,
+    );
+  }
+  if (subCent) {
+    moneyNotes.push(
+      "written precision is finer than a cent — rounded to the nearest cent, flagged not silent",
+    );
+  }
   return {
-    value: `${s.currency} ${s.amount.toFixed(2)}`,
-    ...(note ? { note } : {}),
+    value: `${s.currency} ${(cents / 100).toFixed(2)}`,
+    ...(moneyNotes.length ? { note: moneyNotes.join("; ") } : {}),
+    ...(subCent ? { codeFloor: "guessed" as const } : {}),
   };
 }
 

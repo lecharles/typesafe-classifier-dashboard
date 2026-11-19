@@ -652,6 +652,232 @@ describe("UC#8-live runExtractBatch (snippet ladder 5 → 10 → All)", () => {
   });
 });
 
+describe("UC#8-validator-v2 — clocks, offsets, separators, cents (11-20 row)", () => {
+  type IsoParts = Omit<Extract<Detected["shape"], { shape: "iso" }>, "shape">;
+  type NumericParts = Omit<Extract<Detected["shape"], { shape: "numeric" }>, "shape">;
+  const iso = (token: string, parts: IsoParts): Detected => ({
+    token,
+    kind: "date",
+    shape: { ...parts, shape: "iso" },
+    index: 0,
+  });
+  const numeric = (token: string, parts: NumericParts): Detected => ({
+    token,
+    kind: "date",
+    shape: { ...parts, shape: "numeric" },
+    index: 0,
+  });
+
+  it("a real clock passes untouched — 23:59:59 is as written, no floor", () => {
+    const n = normalizeDetected(
+      iso("2026-11-20T23:59:59", { y: 2026, mo: 11, d: 20, hh: "23", mi: "59", ss: "59" }),
+    );
+    expect(n.value).toBe("2026-11-20T23:59:59");
+    expect(n.codeFloor).toBeUndefined();
+  });
+
+  it("impossible clock parts are refused outright, however well-shaped", () => {
+    const refusals = [
+      iso("2026-11-20T25:00", { y: 2026, mo: 11, d: 20, hh: "25", mi: "00" }),
+      iso("2026-11-20T23:60", { y: 2026, mo: 11, d: 20, hh: "23", mi: "60" }),
+      iso("2026-11-20T12:00:61", { y: 2026, mo: 11, d: 20, hh: "12", mi: "00", ss: "61" }),
+      iso("2026-11-20T24:30", { y: 2026, mo: 11, d: 20, hh: "24", mi: "30" }),
+      iso("2026-11-20T10:30:60", { y: 2026, mo: 11, d: 20, hh: "10", mi: "30", ss: "60" }),
+    ];
+    for (const d of refusals) {
+      const n = normalizeDetected(d);
+      expect(n.value).toBeNull();
+      expect(n.parseError).toMatch(/impossible|only reads 24:00|leap-second/);
+    }
+  });
+
+  it("24:00 is end-of-day — it rolls into the NEXT day and rides guessed", () => {
+    const roll = normalizeDetected(
+      iso("2026-11-20T24:00", { y: 2026, mo: 11, d: 20, hh: "24", mi: "00" }),
+    );
+    expect(roll.value).toBe("2026-11-21T00:00");
+    expect(roll.note).toMatch(/end-of-day/);
+    expect(roll.codeFloor).toBe("guessed");
+    // leap-day rollover: Feb 29 2028 is real, its 24:00 is Mar 1
+    const leap = normalizeDetected(
+      iso("2028-02-29T24:00:00", { y: 2028, mo: 2, d: 29, hh: "24", mi: "00", ss: "00" }),
+    );
+    expect(leap.value).toBe("2028-03-01T00:00:00");
+    // year-end rollover
+    const year = normalizeDetected(
+      iso("2026-12-31T24:00", { y: 2026, mo: 12, d: 31, hh: "24", mi: "00" }),
+    );
+    expect(year.value).toBe("2027-01-01T00:00");
+  });
+
+  it("the leap-second form 23:59:60 is carried through, flagged — never clean", () => {
+    const n = normalizeDetected(
+      iso("2016-12-31T23:59:60Z", {
+        y: 2016, mo: 12, d: 31, hh: "23", mi: "59", ss: "60", tz: "Z",
+      }),
+    );
+    expect(n.value).toBe("2016-12-31T23:59:60Z");
+    expect(n.note).toMatch(/leap-second/);
+    expect(n.codeFloor).toBe("guessed");
+  });
+
+  it("UTC offsets are validated and colon-normalized; Z stays as written", () => {
+    const colon = normalizeDetected(
+      iso("2026-11-20T09:00+0530", {
+        y: 2026, mo: 11, d: 20, hh: "09", mi: "00", tz: "+0530",
+      }),
+    );
+    expect(colon.value).toBe("2026-11-20T09:00+05:30");
+    expect(colon.note).toMatch(/normalized to '\+05:30'/);
+    expect(colon.codeFloor).toBe("guessed");
+    const zulu = normalizeDetected(
+      iso("2027-01-05T00:00:00Z", {
+        y: 2027, mo: 1, d: 5, hh: "00", mi: "00", ss: "00", tz: "Z",
+      }),
+    );
+    expect(zulu.value).toBe("2027-01-05T00:00:00Z");
+    expect(zulu.codeFloor).toBeUndefined();
+    const west = normalizeDetected(
+      iso("2026-11-20T09:00-07:30", {
+        y: 2026, mo: 11, d: 20, hh: "09", mi: "00", tz: "-07:30",
+      }),
+    );
+    expect(west.value).toBe("2026-11-20T09:00-07:30");
+    expect(west.codeFloor).toBeUndefined();
+    const bad = normalizeDetected(
+      iso("2026-11-20T09:00+24:00", {
+        y: 2026, mo: 11, d: 20, hh: "09", mi: "00", tz: "+24:00",
+      }),
+    );
+    expect(bad.value).toBeNull();
+    expect(bad.parseError).toMatch(/impossible UTC offset/);
+    const badMin = normalizeDetected(
+      iso("2026-11-20T09:00+05:75", {
+        y: 2026, mo: 11, d: 20, hh: "09", mi: "00", tz: "+05:75",
+      }),
+    );
+    expect(badMin.parseError).toMatch(/impossible UTC offset/);
+  });
+
+  it("mixed separators are DETECTED then refused — a visible typo, never invisible drift", () => {
+    const dets = detectCandidates("due 11/20-2026 firm");
+    expect(dets.map((d) => d.token)).toEqual(["11/20-2026"]);
+    const mixed = normalizeDetected(dets[0]);
+    expect(mixed.value).toBeNull();
+    expect(mixed.parseError).toMatch(/mixes '\/' and '-'/);
+    // uniform separators normalize untouched
+    const dots = normalizeDetected(
+      numeric("11.20.2026", { a: 11, sepA: ".", b: 20, sepB: ".", y: 2026, twoDigitYear: false }),
+    );
+    expect(dots.value).toBe("2026-11-20");
+    expect(dots.codeFloor).toBeUndefined();
+    // shapes without separator info (legacy literals) still normalize
+    const legacy = normalizeDetected(
+      numeric("11/20/2026", { a: 11, b: 20, y: 2026, twoDigitYear: false }),
+    );
+    expect(legacy.value).toBe("2026-11-20");
+  });
+
+  it("sub-cent money rounds to the nearest cent with cent-exact math — and is flagged", () => {
+    const dets = detectCandidates("bond $250.499, ticket $1.999, coffee $1,200.50, fee $300.00");
+    const byToken = (t: string) => dets.find((d) => d.token === t)!;
+    const bond = normalizeDetected(byToken("$250.499"));
+    expect(bond.value).toBe("USD 250.50");
+    expect(bond.note).toMatch(/finer than a cent/);
+    expect(bond.codeFloor).toBe("guessed");
+    const ticket = normalizeDetected(byToken("$1.999"));
+    expect(ticket.value).toBe("USD 2.00");
+    expect(ticket.codeFloor).toBe("guessed");
+    // cent-aligned money never picks up a spurious floor
+    const coffee = normalizeDetected(byToken("$1,200.50"));
+    expect(coffee.value).toBe("USD 1200.50");
+    expect(coffee.note).toBeUndefined();
+    expect(coffee.codeFloor).toBeUndefined();
+    const fee = normalizeDetected(byToken("$300.00"));
+    expect(fee.value).toBe("USD 300.00");
+    expect(fee.codeFloor).toBeUndefined();
+  });
+
+  it("fractional yen is refused — JPY is zero-decimal; whole yen untouched", () => {
+    const dets = detectCandidates("priced ¥1.5 per unit, invoice ¥1,000,000, budget ¥1.5m");
+    const frac = normalizeDetected(dets.find((d) => d.token === "¥1.5")!);
+    expect(frac.value).toBeNull();
+    expect(frac.parseError).toMatch(/zero-decimal/);
+    const whole = normalizeDetected(dets.find((d) => d.token === "¥1,000,000")!);
+    expect(whole.value).toBe("JPY 1000000.00");
+    expect(whole.codeFloor).toBeUndefined();
+    // multipliers can manufacture integers from fractional shorthand — that is real money
+    const shorthand = normalizeDetected(dets.find((d) => d.token === "¥1.5m")!);
+    expect(shorthand.value).toBe("JPY 1500000.00");
+    expect(shorthand.note).toMatch(/shorthand 'm'/);
+    expect(shorthand.codeFloor).toBeUndefined();
+  });
+
+  it("deepened floors are absolute for a razor-sharp reader — guessed, never clean", () => {
+    const roll: Normalized = {
+      value: "2026-11-21T00:00",
+      note: "'24:00' is end-of-day — normalized to 00:00 of the following day",
+      codeFloor: "guessed",
+    };
+    const dec = decideExtractionVerdict(sig(), roll, "date");
+    expect(dec.status).toBe("guessed");
+    expect(dec.value).toBe("2026-11-21T00:00");
+    expect(dec.reasons.join(" ")).toMatch(/code floor guessed/);
+    expect(dec.reasons.join(" ")).toMatch(/end-of-day/);
+  });
+
+  it("a vague base is never RESCUED by a deepened floor", () => {
+    const roll: Normalized = {
+      value: "USD 250.50",
+      note: "written precision is finer than a cent — rounded to the nearest cent, flagged not silent",
+      codeFloor: "guessed",
+    };
+    const dec = decideExtractionVerdict(sig({ precision: 1 }), roll, "money");
+    expect(dec.status).toBe("vague");
+    expect(dec.value).toBeNull();
+  });
+
+  it("a refused clock/separator/amount still rejects through the ladder", () => {
+    for (const norm of [
+      { value: null, parseError: "2026-11-20T25:00 has an impossible hour on the clock" },
+      { value: null, parseError: "11/20-2026 mixes separators — a typo, not a date" },
+      { value: null, parseError: "¥1.5 writes a fractional yen — JPY is zero-decimal" },
+    ] as Normalized[]) {
+      const dec = decideExtractionVerdict(sig(), norm, "date");
+      expect(dec.status).toBe("rejected");
+      expect(dec.value).toBeNull();
+    }
+  });
+
+  it("strict sliders drop even flagged-but-rounded values off the ladder — no pin, no ship", () => {
+    const roll: Normalized = {
+      value: "2026-11-21T00:00",
+      note: "'24:00' is end-of-day",
+      codeFloor: "guessed",
+    };
+    const dec = decideExtractionVerdict(sig({ precision: 2.5 }), roll, "date", {
+      ...DEFAULT_GATES,
+      resolveAt: 3.5,
+    });
+    expect(dec.status).toBe("vague");
+    expect(dec.value).toBeNull();
+  });
+
+  it("live extractText carries the deepened verdicts end to end", async () => {
+    const fakeFn = (async () =>
+      fakeResult(extractAnswers({ precision: score(4, 0.95) }))) as never;
+    const out = await extractText(
+      "Wrap by 2026-11-20T24:00; bond $250.499 due; old ticket 11/20-2026 void.",
+      { classifyFn: fakeFn, anchor: "2026-11-18" },
+    );
+    expect(out.results.map((r) => [r.token, r.status, r.value])).toEqual([
+      ["2026-11-20T24:00", "guessed", "2026-11-21T00:00"],
+      ["$250.499", "guessed", "USD 250.50"],
+      ["11/20-2026", "rejected", null],
+    ]);
+  });
+});
+
 describe("UC#8 shipped snippet corpus", () => {
   it("has unique ids, >10 snippets so the All rung exceeds 10, non-empty texts", () => {
     expect(extractionCorpus.length).toBeGreaterThan(10);
@@ -666,6 +892,11 @@ describe("UC#8 shipped snippet corpus", () => {
     expect(joined).toMatch(/03\/04\/2026/); // ambiguous MM/DD
     expect(joined).toMatch(/tomorrow|next Friday|next month|today/); // anchor traps
     expect(joined).toMatch(/\$\d+[kmb]?|€3m/); // money shorthand
+    // validator v2 traps (11-20 row) — each must be DETECTED, refused or flagged in code
+    expect(joined).toMatch(/T24:00/); // end-of-day clock notation
+    expect(joined).toMatch(/\$\d+\.\d{3}/); // sub-cent precision
+    expect(joined).toMatch(/¥1\.5\b/); // fractional yen
+    expect(joined).toMatch(/\d{1,2}\/\d{1,2}-\d{4}/); // mixed separators
     // deterministically: at least one snippet has zero candidates for the
     // "never fabricate" path
     const noTokens = extractionCorpus.filter((s) => detectCandidates(s.text).length === 0);
@@ -688,5 +919,31 @@ describe("UC#8 shipped snippet corpus", () => {
     const leap = detByToken("2028-02-29");
     expect(leap).toBeDefined();
     expect(normalizeDetected(leap!, "2026-11-18").value).toBe("2028-02-29");
+  });
+
+  it("validator v2 traps fire deterministically over the shipped corpus", () => {
+    const detByToken = (needle: string): Detected | undefined =>
+      extractionCorpus
+        .flatMap((s) => detectCandidates(s.text))
+        .find((d) => d.token === needle);
+    const roll = detByToken("2026-11-20T24:00");
+    expect(roll).toBeDefined();
+    const rollNorm = normalizeDetected(roll!, "2026-11-18");
+    expect(rollNorm.value).toBe("2026-11-21T00:00");
+    expect(rollNorm.codeFloor).toBe("guessed");
+    const bond = detByToken("$250.499");
+    expect(bond).toBeDefined();
+    expect(normalizeDetected(bond!).value).toBe("USD 250.50");
+    expect(normalizeDetected(bond!).codeFloor).toBe("guessed");
+    const mixed = detByToken("11/20-2026");
+    expect(mixed).toBeDefined(); // detected — the refusal is visible, not silent
+    expect(normalizeDetected(mixed!).parseError).toMatch(/mixes/);
+    const reprint = detByToken("11/21/2026");
+    expect(reprint).toBeDefined();
+    expect(normalizeDetected(reprint!).value).toBe("2026-11-21");
+    expect(normalizeDetected(reprint!).codeFloor).toBeUndefined();
+    const yen = detByToken("¥1.5");
+    expect(yen).toBeDefined();
+    expect(normalizeDetected(yen!).parseError).toMatch(/zero-decimal/);
   });
 });

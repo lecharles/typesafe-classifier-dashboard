@@ -7,6 +7,9 @@
  * leap-year traps (2026 is NOT a leap year, 2028 is), relative
  * expressions that need an anchor, and money in symbols, codes, and
  * magnitude shorthand — so every rung of the extraction ladder fires.
+ * Validator v2 (11-20 row) adds the deepened traps: the end-of-day
+ * 24:00 notation, a sub-cent bond figure, fractional yen, and a
+ * mixed-separator date typo — each DETECTED so the refusal is visible.
  */
 
 export type ExtractionSnippet = {
@@ -74,5 +77,13 @@ export const extractionCorpus: ExtractionSnippet[] = [
   {
     id: "x15",
     text: "Leap-day sync scheduled 2028-02-29; migration credit $100 applied.",
+  },
+  {
+    id: "x16",
+    text: "Wrap the venue by 2026-11-20T24:00; the cleanup bond of $250.499 clears at signing.",
+  },
+  {
+    id: "x17",
+    text: "Per-unit pricing ¥1.5 was voided on arrival; the old ticket 11/20-2026 was reprinted as 11/21/2026.",
   },
 ];

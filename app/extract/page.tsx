@@ -218,7 +218,9 @@ export default function ExtractPage() {
       <h1>Date/value extractor</h1>
       <p className="subtitle">
         UC#8 live · normalize messy dates or amounts — CODE detects, validates,
-        and normalizes every token; kind (Choice) + precision (Score) +
+        and normalizes every token; validator v2 — clock times, UTC offsets,
+        mixed-separator typos, and sub-cent/zero-decimal money are validated IN
+        CODE; kind (Choice) + precision (Score) +
         ambiguity (Noul) decide resolved / guessed / vague / rejected IN CODE ·
         batch discipline 5 → 10 → All over the messy-snippet corpus · invalid
         dates are never normalized, conventions are never shipped clean

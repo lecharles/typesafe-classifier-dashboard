@@ -71,7 +71,7 @@ const cards = [
     href: "/extract",
     num: "Level 12",
     title: "Date/value extractor",
-    body: "UC#8: messy dates and amounts in, canonical values out — CODE detects, validates, and normalizes every token (no Feb 30 ever ships), while kind (Choice) + precision (Score) + ambiguity (Noul) decide resolved / guessed / vague / rejected in code, batched 5 → 10 → All over the messy-snippet corpus.",
+    body: "UC#8: messy dates and amounts in, canonical values out — CODE detects, validates, and normalizes every token (no Feb 30 ever ships; validator v2 also refuses impossible clock times, bad UTC offsets, mixed-separator typos, and fractional yen), while kind (Choice) + precision (Score) + ambiguity (Noul) decide resolved / guessed / vague / rejected in code, batched 5 → 10 → All over the messy-snippet corpus.",
   },
 ];
 
