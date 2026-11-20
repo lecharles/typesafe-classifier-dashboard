@@ -73,6 +73,12 @@ const cards = [
     title: "Date/value extractor",
     body: "UC#8: messy dates and amounts in, canonical values out — CODE detects, validates, and normalizes every token (no Feb 30 ever ships; validator v2 also refuses impossible clock times, bad UTC offsets, mixed-separator typos, and fractional yen), while kind (Choice) + precision (Score) + ambiguity (Noul) decide resolved / guessed / vague / rejected in code, batched 5 → 10 → All over the messy-snippet corpus.",
   },
+  {
+    href: "/chat",
+    num: "Level 13",
+    title: "Live chat filter",
+    body: "UC#9: Twitch-style chat moderation — insults, spam & spoilers out; toxicity (Score) + promo & spoiler (Noul) decide allow / hold / block in CODE (a friendly-voiced scam link is still spam; a spoiler never passes silently but is hidden, not punished), batched 5 → 10 → All over a 28-message stream scroll with a per-user offender rollup.",
+  },
 ];
 
 export default function Home() {

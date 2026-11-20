@@ -20,6 +20,7 @@ const nav = [
   { href: "/memory", label: "Memory" },
   { href: "/bs", label: "BS detector" },
   { href: "/extract", label: "Extraction" },
+  { href: "/chat", label: "Chat filter" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
