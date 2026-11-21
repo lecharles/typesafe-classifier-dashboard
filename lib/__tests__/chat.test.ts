@@ -4,22 +4,33 @@ import {
   CHAT_LEVELS,
   CHAT_NOTE,
   CHAT_RANK,
+  CHAT_STRIKE_NOTE,
+  CHAT_STRIKE_RANK,
+  CHAT_STRIKE_STATES,
   DEFAULT_GATES,
+  DEFAULT_STRIKE_GATES,
+  applyChatStrikes,
   buildChatCorpus,
   chatBadgeClass,
+  chatOffenderExportRows,
   chatOffenders,
   chatQuestions,
   chatState,
+  chatStrikeBadgeClass,
+  chatStrikeExportRows,
   decideChatAction,
   moderateChatMessage,
   normalizeGates,
+  normalizeStrikeGates,
   runChatBatch,
   signalsFrom,
   type ChatAction,
   type ChatBatchItem,
   type ChatGates,
   type ChatSignals,
+  type ChatStrikeRow,
 } from "@/lib/chat";
+import { toCSV } from "@/lib/export";
 import { chatMessages } from "@/data/chat-corpus";
 import type { Answer, ClassifyResult } from "@/lib/schema";
 
@@ -524,5 +535,227 @@ describe("UC#9 runChatBatch (ladder 5 → 10 → All + tallies + rollup)", () =>
     expect(action("c24")).toBe("allow"); // cheer hype
     // the rollup names the timeout candidates by handle
     expect(rep.offenders[0].blocks).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("UC#9 batch discipline deepening — repeat-offender strike ledger", () => {
+  const item = (
+    id: string,
+    user: string,
+    action?: ChatAction,
+    error?: string,
+  ): ChatBatchItem => ({
+    id,
+    user,
+    message: "m",
+    ...(action ? { action } : {}),
+    ...(error ? { error } : {}),
+  });
+
+  it("strike ladder is strictly ordered watch < timeout < ban", () => {
+    expect(CHAT_STRIKE_STATES).toEqual(["watch", "timeout", "ban"]);
+    expect(CHAT_STRIKE_RANK.watch).toBeLessThan(CHAT_STRIKE_RANK.timeout);
+    expect(CHAT_STRIKE_RANK.timeout).toBeLessThan(CHAT_STRIKE_RANK.ban);
+    for (const s of CHAT_STRIKE_STATES) expect(CHAT_STRIKE_NOTE[s]).toMatch(/\w/);
+  });
+
+  it("badge classes: watch warns, timeout/ban are bad", () => {
+    expect(chatStrikeBadgeClass("watch")).toBe("warn");
+    expect(chatStrikeBadgeClass("timeout")).toBe("bad");
+    expect(chatStrikeBadgeClass("ban")).toBe("bad");
+  });
+
+  it("normalizeStrikeGates merges partials over defaults", () => {
+    expect(normalizeStrikeGates()).toEqual(DEFAULT_STRIKE_GATES);
+    expect(normalizeStrikeGates({ banBlocks: 1 })).toEqual({
+      ...DEFAULT_STRIKE_GATES,
+      banBlocks: 1,
+    });
+    expect(DEFAULT_STRIKE_GATES.banBlocks).toBeGreaterThanOrEqual(2);
+    expect(DEFAULT_STRIKE_GATES.burstAt).toBeGreaterThanOrEqual(1);
+  });
+
+  it("first fold: one hold watches, one block times out, two blocks ban", () => {
+    const watch = applyChatStrikes([], [item("s1", "grumbler", "hold")]);
+    expect(watch.rows[0]).toMatchObject({ user: "grumbler", holds: 1, blocks: 0, state: "watch", score: 1 });
+    const timeout = applyChatStrikes([], [item("s2", "meanone", "block")]);
+    expect(timeout.rows[0]).toMatchObject({ blocks: 1, holds: 0, state: "timeout", score: 10 });
+    const ban = applyChatStrikes(
+      timeout.rows,
+      [item("s3", "meanone", "block")],
+    );
+    expect(ban.rows[0]).toMatchObject({ blocks: 2, state: "ban" });
+  });
+
+  it("TEMPO ALONE NEVER BANS — burst holds can reach timeout but never the ban lane", () => {
+    // three scrolls where one handle posts > burstAt messages, every
+    // message individually ALLOWed: speed is suspicious, not attacking.
+    let rows: ChatStrikeRow[] = [];
+    for (let scroll = 0; scroll < 3; scroll += 1) {
+      const burst = Array.from({ length: 5 }, (_, i) =>
+        item(`f${scroll}-${i}`, "hypehydra", "allow"),
+      );
+      rows = applyChatStrikes(rows, burst).rows;
+    }
+    expect(rows).toHaveLength(1);
+    const hydra = rows[0];
+    expect(hydra.bursts).toBe(3);
+    expect(hydra.holds).toBe(3); // each burst scroll feeds exactly one hold
+    expect(hydra.blocks).toBe(0);
+    expect(hydra.state).toBe("timeout"); // sustained tempo…
+    expect(hydra.state).not.toBe("ban"); // …but a ban needs REAL blocks
+    expect(hydra.reasons.some((r) => /burst scrolls 3/.test(r))).toBe(true);
+  });
+
+  it("sustained holds without a block cap out at timeout, never ban", () => {
+    let rows: ChatStrikeRow[] = [];
+    rows = applyChatStrikes(rows, [item("h1", "twistcat", "hold"), item("h2", "twistcat", "hold")]).rows;
+    expect(rows[0].state).toBe("watch");
+    rows = applyChatStrikes(rows, [item("h3", "twistcat", "hold")]).rows;
+    expect(rows[0]).toMatchObject({ holds: 3, blocks: 0, state: "timeout" });
+    rows = applyChatStrikes(rows, Array.from({ length: 9 }, (_, i) => item(`h4-${i}`, "twistcat", "hold"))).rows;
+    expect(rows[0].state).toBe("timeout"); // twelve holds, zero blocks — still not a ban
+  });
+
+  it("escalation never de-escalates — a quiet fold never wipes an earned ban", () => {
+    let rows: ChatStrikeRow[] = [];
+    rows = applyChatStrikes(rows, [item("b1", "botnet", "block")]).rows;
+    rows = applyChatStrikes(rows, [item("b2", "botnet", "block")]).rows;
+    expect(rows[0].state).toBe("ban");
+    const quiet = applyChatStrikes(rows, [item("b3", "botnet", "allow")]);
+    expect(quiet.rows[0].state).toBe("ban"); // amnesty is an explicit mod call
+    expect(quiet.rows[0].holds).toBe(0); // the clean message fed nothing punitive
+    // the monotonic guard also survives a STRICTER gate applied later:
+    // raising banBlocks to 3 would demote the recomputed ladder to
+    // timeout — the prior state is kept and the reason says so.
+    const stricter = applyChatStrikes(rows, [item("b4", "botnet", "allow")], { banBlocks: 3 });
+    expect(stricter.rows[0].state).toBe("ban");
+    expect(stricter.rows[0].reasons.some((r) => /prior state ban kept/.test(r))).toBe(true);
+  });
+
+  it("errored items are excluded and counted, never silently dropped", () => {
+    const ledger = applyChatStrikes([], [
+      item("e1", "crashy", undefined, "gateway down"),
+      item("e2", "spammy", "block"),
+      item("e3", "spammy", "hold"),
+    ]);
+    expect(ledger.errors).toBe(1);
+    expect(ledger.folded).toBe(2);
+    expect(ledger.rows.map((r) => r.user)).toEqual(["spammy"]);
+    // errored messages never feed the burst counter either
+    const burstOnly = applyChatStrikes([], Array.from({ length: 6 }, (_, i) =>
+      item(`x${i}`, "flaky", undefined, "boom"),
+    ));
+    expect(burstOnly.errors).toBe(6);
+    expect(burstOnly.rows).toEqual([]);
+  });
+
+  it("clean chatgoers never appear on the board", () => {
+    const ledger = applyChatStrikes([], [item("g1", "goodvibes", "allow"), item("g2", "another", "allow")]);
+    expect(ledger.rows).toEqual([]);
+    expect(ledger.folded).toBe(2);
+  });
+
+  it("total order: score desc → holds desc → user asc; deterministic under input order", () => {
+    const a = applyChatStrikes([], [
+      item("o1", "botnet", "block"),
+      item("o2", "botnet", "block"),
+      item("o3", "grumbler", "hold"),
+      item("o4", "quiet", "hold"),
+      item("o5", "twistcat", "hold"),
+      item("o6", "twistcat", "hold"),
+    ]);
+    expect(a.rows.map((r) => r.user)).toEqual(["botnet", "twistcat", "grumbler", "quiet"]);
+    // determinism: same set, shuffled input
+    const shuffled = applyChatStrikes([], [
+      item("o3", "grumbler", "hold"),
+      item("o6", "twistcat", "hold"),
+      item("o1", "botnet", "block"),
+      item("o5", "twistcat", "hold"),
+      item("o4", "quiet", "hold"),
+      item("o2", "botnet", "block"),
+    ]);
+    expect(shuffled.rows.map((r) => r.user)).toEqual(a.rows.map((r) => r.user));
+  });
+
+  it("gates are honored: a stricter ban gate bans on the first block", () => {
+    const ledger = applyChatStrikes([], [item("c1", "meanone", "block")], { banBlocks: 1 });
+    expect(ledger.rows[0].state).toBe("ban");
+    // with a stricter burst limit the tempo discipline fires earlier
+    const bursty = applyChatStrikes([], Array.from({ length: 2 }, (_, i) => item(`k${i}`, "hypehydra", "allow")), { burstAt: 1 });
+    expect(bursty.rows[0].bursts).toBe(1);
+    expect(bursty.rows[0].holds).toBe(1);
+  });
+
+  it("applyChatStrikes is pure — previous rows are never mutated", () => {
+    const first = applyChatStrikes([], [item("p1", "spammy", "block")]);
+    const frozen = JSON.parse(JSON.stringify(first.rows));
+    applyChatStrikes(first.rows, [item("p2", "spammy", "block"), item("p3", "newbie", "hold")]);
+    expect(first.rows).toEqual(frozen);
+  });
+
+  it("strike export rows: stable column order through the D8 pipeline", () => {
+    const ledger = applyChatStrikes([], [
+      item("d1", "botnet", "block"),
+      item("d2", "botnet", "block"),
+      item("d3", "grumbler", "hold"),
+    ]);
+    const rows = chatStrikeExportRows(ledger.rows);
+    expect(Object.keys(rows[0])).toEqual(["rank", "user", "holds", "blocks", "bursts", "score", "state"]);
+    expect(rows[0].rank).toBe(1);
+    expect(rows[0].user).toBe("botnet");
+    expect(rows[0].state).toBe("ban");
+    expect(rows[1]).toMatchObject({ rank: 2, user: "grumbler", state: "watch" });
+    const csv = toCSV(rows);
+    expect(csv.split("\r\n")[0]).toBe("rank,user,holds,blocks,bursts,score,state");
+    expect(csv).toContain("ban");
+  });
+
+  it("offender export rows: rank rides the rollup order through the D8 pipeline", () => {
+    const rows = chatOffenderExportRows(chatOffenders([
+      item("r1", "botnet", "block"),
+      item("r2", "twistcat", "hold"),
+    ]));
+    expect(Object.keys(rows[0])).toEqual(["rank", "user", "holds", "blocks", "score"]);
+    expect(rows[0]).toMatchObject({ rank: 1, user: "botnet", blocks: 1, score: 10 });
+    expect(rows[1]).toMatchObject({ rank: 2, user: "twistcat", holds: 1, score: 1 });
+    const csv = toCSV(rows);
+    expect(csv.split("\r\n")[0]).toBe("rank,user,holds,blocks,score");
+  });
+
+  it("end-to-end: two ladder rungs folded in sequence escalate the bot net to a ban IN CODE", async () => {
+    const fake = (req: { state: string }) =>
+      req.state.includes("PROMO")
+        ? fakeResult(chatAnswers({ promo: noul(0.95) }))
+        : fakeResult(chatAnswers());
+    // scroll one: bots and a spoiler
+    const rep1 = await runChatBatch(
+      [
+        { id: "w1", user: "botnet", message: "PROMO free followers click" },
+        { id: "w2", user: "botnet", message: "PROMO type your password" },
+        { id: "w3", user: "twistcat", message: "the boss is behind the waterfall door" },
+      ],
+      { classifyFn: fake as never, limit: null },
+    );
+    expect(rep1.offenders.map((o) => o.user)).toEqual(["botnet", "twistcat"]);
+    const ledger1 = applyChatStrikes([], rep1.items);
+    expect(ledger1.rows.find((r) => r.user === "botnet")?.state).toBe("ban"); // 2 blocks already
+    // scroll two: more noise, the ledger REMEMBERS — nothing de-escalates
+    const rep2 = await runChatBatch(
+      [
+        { id: "w4", user: "twistcat", message: "PROMO f4f gang" },
+        { id: "w5", user: "hype_llama", message: "POG" },
+      ],
+      { classifyFn: fake as never, limit: null },
+    );
+    const ledger2 = applyChatStrikes(ledger1.rows, rep2.items);
+    expect(ledger2.rows.find((r) => r.user === "botnet")?.state).toBe("ban");
+    expect(ledger2.rows.find((r) => r.user === "twistcat")?.blocks).toBe(1);
+    expect(ledger2.rows[0].user).toBe("botnet"); // worst first, bands dominant
+    expect(ledger2.folded).toBe(2);
+    // export the whole board through D8
+    const csv = toCSV(chatStrikeExportRows(ledger2.rows));
+    expect(csv).toContain("state");
+    expect(csv.split("\r\n")).toHaveLength(ledger2.rows.length + 1);
   });
 });

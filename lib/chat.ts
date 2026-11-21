@@ -1,6 +1,7 @@
 import { classify } from "@/lib/classify";
 import { BATCH_LADDER } from "@/lib/dispatch";
 import { chatMessages, type ChatMessage } from "@/data/chat-corpus";
+import type { ExportRow } from "@/lib/export";
 import type { ClassifyResult, Provider, Question, Usage } from "@/lib/schema";
 
 /**
@@ -427,6 +428,224 @@ export function chatOffenders(items: ChatBatchItem[]): ChatOffenderRow[] {
   return [...byUser.entries()]
     .map(([user, r]) => ({ user, holds: r.holds, blocks: r.blocks, score: r.blocks * 10 + r.holds }))
     .sort((a, b) => b.score - a.score || b.holds - a.holds || a.user.localeCompare(b.user));
+}
+
+/** Flatten the offender rollup for the D8 export pipeline (stable column order). */
+export function chatOffenderExportRows(rows: ChatOffenderRow[]): ExportRow[] {
+  return rows.map((r, i) => ({
+    rank: i + 1,
+    user: r.user,
+    holds: r.holds,
+    blocks: r.blocks,
+    score: r.score,
+  }));
+}
+
+/* ------------------------------------------------------------------ *
+ * Repeat-offender strike ledger — the batch-discipline deepening.
+ *
+ * A fast-scrolling chat punishes per MESSAGE; a mod's timeout is per
+ * USER across the whole stream. So the rollup folds into a strike
+ * ledger that rides from batch to batch: holds, blocks, and BURST
+ * flags (one handle posting > burstAt messages in a single scroll is
+ * bot-tempo whatever the text says). Escalation is decided IN CODE
+ * from the accumulated ledger — never from one batch's moods.
+ *
+ * Safety story, same inversions as the message ladder:
+ *  - escalation NEVER de-escalates: the ledger remembers; a clean
+ *    scroll never wipes a ban earned earlier (amnesty is a mod's
+ *    explicit call, not a side effect of quiet traffic);
+ *  - TEMPO ALONE NEVER BANS: bursts feed holds, holds reach at most
+ *    timeout — the hardest penalty needs real blocks, because speed
+ *    is suspicious, not attacking;
+ *  - errored items are excluded and COUNTED, never silently dropped;
+ *  - clean chatgoers never appear in the ledger.
+ * ------------------------------------------------------------------ */
+
+export const CHAT_STRIKE_STATES = ["watch", "timeout", "ban"] as const;
+export type ChatStrikeState = (typeof CHAT_STRIKE_STATES)[number];
+
+export const CHAT_STRIKE_RANK: Record<ChatStrikeState, number> = {
+  watch: 1,
+  timeout: 2,
+  ban: 3,
+};
+
+export const CHAT_STRIKE_NOTE: Record<ChatStrikeState, string> = {
+  watch: "first strike — a mod's eye, nothing more",
+  timeout: "sustained offender — the lane is timed out in data",
+  ban: "earned blocks across scrolls — the hardest penalty needs attacking, not tempo",
+};
+
+export function chatStrikeBadgeClass(s: ChatStrikeState): "warn" | "bad" {
+  return s === "watch" ? "warn" : "bad";
+}
+
+export type ChatStrikeGates = {
+  /** accumulated score (blocks ×10 + holds) at or above which a handle appears on the board. */
+  watchAt: number;
+  /** accumulated holds at or above which the handle times out WITHOUT a block. */
+  timeoutHolds: number;
+  /** accumulated blocks at or above which the handle is banned. Holds alone can never reach this. */
+  banBlocks: number;
+  /** more messages from ONE handle in a single scroll than this = bot-tempo burst (adds one hold). */
+  burstAt: number;
+};
+
+export const DEFAULT_STRIKE_GATES: ChatStrikeGates = {
+  watchAt: 1,
+  timeoutHolds: 3,
+  banBlocks: 2,
+  burstAt: 4,
+};
+
+export function normalizeStrikeGates(
+  partial?: Partial<ChatStrikeGates>,
+): ChatStrikeGates {
+  return { ...DEFAULT_STRIKE_GATES, ...(partial ?? {}) };
+}
+
+export type ChatStrikeRow = {
+  user: string;
+  /** accumulated across every folded batch — the ledger remembers */
+  holds: number;
+  blocks: number;
+  /** scrolls in which this handle posted > burstAt messages */
+  bursts: number;
+  /** blocks ×10 + holds — same band-dominance construction as the rollup */
+  score: number;
+  state: ChatStrikeState;
+  reasons: string[];
+};
+
+export type ChatStrikeLedger = {
+  rows: ChatStrikeRow[];
+  /** items in the batch just folded that errored — excluded and counted */
+  errors: number;
+  /** messages from the batch just folded that reached a verdict */
+  folded: number;
+};
+
+/**
+ * Escalation decided in code from the ACCUMULATED ledger, monotone:
+ * ban needs blocks (tempo/holds alone cap at timeout), timeout needs
+ * a real block OR sustained holds, anything on the board is at least
+ * watched. A state earned once is never walked back by a quiet scroll.
+ */
+function escalate(
+  user: string,
+  holds: number,
+  blocks: number,
+  bursts: number,
+  priorState: ChatStrikeState | null,
+  gates: ChatStrikeGates,
+): { state: ChatStrikeState; reasons: string[] } {
+  const score = blocks * 10 + holds;
+  const reasons: string[] = [];
+
+  let rank = 0;
+  if (score >= gates.watchAt) {
+    rank = CHAT_STRIKE_RANK.watch;
+    reasons.push(
+      `strike score ${score} ≥ ${gates.watchAt} — on the board, watched (holds ${holds}, blocks ${blocks}${bursts > 0 ? `, burst scrolls ${bursts}` : ""})`,
+    );
+  }
+  if (blocks >= 1 || holds >= gates.timeoutHolds) {
+    rank = Math.max(rank, CHAT_STRIKE_RANK.timeout);
+    reasons.push(
+      blocks >= 1
+        ? `blocks ${blocks} ≥ 1 — a squashed attack does not get walked back by a quiet scroll: sustained, timed out in data`
+        : `holds ${holds} ≥ sustained-offender gate ${gates.timeoutHolds} — crude-but-harmless repeatedly is a pattern, not a moment`,
+    );
+  }
+  if (blocks >= gates.banBlocks) {
+    rank = Math.max(rank, CHAT_STRIKE_RANK.ban);
+    reasons.push(
+      `blocks ${blocks} ≥ ban gate ${gates.banBlocks} — the hardest penalty needs attacking across scrolls, never tempo alone (a burst only ever feeds holds)`,
+    );
+  }
+
+  // Monotone: escalation never de-escalates. Amnesty is an explicit
+  // mod action on the board, not a side effect of quiet traffic.
+  if (priorState && CHAT_STRIKE_RANK[priorState] > rank) {
+    reasons.push(
+      `prior state ${priorState} kept — a clean fold never wipes a strike already earned; amnesty is decided by a mod, not by quiet traffic`,
+    );
+    rank = CHAT_STRIKE_RANK[priorState];
+  }
+
+  const state = CHAT_STRIKE_STATES[Math.min(Math.max(0, rank - 1), CHAT_STRIKE_STATES.length - 1)];
+  reasons.push(`strike state: ${state} (${CHAT_STRIKE_NOTE[state]})`);
+  return { state, reasons };
+}
+
+/**
+ * Fold one batch's items into the strike ledger riding from the last
+ * batch. Pure — the previous rows come in, a new ledger comes out,
+ * nothing is mutated. Burst discipline: a handle posting more than
+ * burstAt messages in one scroll adds ONE hold (bot tempo is
+ * suspicious, not punishing — it can never lift a handle to ban on
+ * its own, since bans only read blocks).
+ */
+export function applyChatStrikes(
+  prev: ChatStrikeRow[],
+  items: ChatBatchItem[],
+  gates: Partial<ChatStrikeGates> = {},
+): ChatStrikeLedger {
+  const g = normalizeStrikeGates(gates);
+
+  const before = new Map<string, { holds: number; blocks: number; bursts: number; state: ChatStrikeState }>();
+  for (const r of prev) {
+    before.set(r.user, { holds: r.holds, blocks: r.blocks, bursts: r.bursts, state: r.state });
+  }
+
+  const seen = new Map<string, { holds: number; blocks: number; messages: number }>();
+  let errors = 0;
+  let folded = 0;
+  for (const it of items) {
+    if (it.error || !it.action) {
+      if (it.error) errors += 1;
+      continue;
+    }
+    folded += 1;
+    const acc = seen.get(it.user) ?? { holds: 0, blocks: 0, messages: 0 };
+    acc.messages += 1;
+    if (it.action === "hold") acc.holds += 1;
+    if (it.action === "block") acc.blocks += 1;
+    seen.set(it.user, acc);
+  }
+
+  const users = new Set([...before.keys(), ...seen.keys()]);
+  const rows: ChatStrikeRow[] = [];
+  for (const user of users) {
+    const base = before.get(user) ?? { holds: 0, blocks: 0, bursts: 0, state: null };
+    const now = seen.get(user);
+    const burstHold = now && now.messages > g.burstAt ? 1 : 0;
+    const holds = (base?.holds ?? 0) + (now?.holds ?? 0) + burstHold;
+    const blocks = (base?.blocks ?? 0) + (now?.blocks ?? 0);
+    const bursts = (base?.bursts ?? 0) + (now && now.messages > g.burstAt ? 1 : 0);
+    if (holds + blocks === 0) continue; // clean chatgoers never appear
+    const esc = escalate(user, holds, blocks, bursts, base?.state ?? null, g);
+    rows.push({ user, holds, blocks, bursts, score: blocks * 10 + holds, ...esc });
+  }
+
+  // Deterministic total order: score desc → holds desc → user asc,
+  // same band-dominance semantics as the per-batch rollup.
+  rows.sort((a, b) => b.score - a.score || b.holds - a.holds || a.user.localeCompare(b.user));
+  return { rows, errors, folded };
+}
+
+/** Flatten strike-ledger rows for the D8 export pipeline (stable column order). */
+export function chatStrikeExportRows(rows: ChatStrikeRow[]): ExportRow[] {
+  return rows.map((r, i) => ({
+    rank: i + 1,
+    user: r.user,
+    holds: r.holds,
+    blocks: r.blocks,
+    bursts: r.bursts,
+    score: r.score,
+    state: r.state,
+  }));
 }
 
 /**

@@ -77,7 +77,7 @@ const cards = [
     href: "/chat",
     num: "Level 13",
     title: "Live chat filter",
-    body: "UC#9: Twitch-style chat moderation — insults, spam & spoilers out; toxicity (Score) + promo & spoiler (Noul) decide allow / hold / block in CODE (a friendly-voiced scam link is still spam; a spoiler never passes silently but is hidden, not punished), batched 5 → 10 → All over a 28-message stream scroll with a per-user offender rollup.",
+    body: "UC#9: Twitch-style chat moderation — insults, spam & spoilers out; toxicity (Score) + promo & spoiler (Noul) decide allow / hold / block in CODE (a friendly-voiced scam link is still spam; a spoiler never passes silently but is hidden, not punished), batched 5 → 10 → All over a 28-message stream scroll with a per-user offender rollup exported through the D8 pipeline, folded batch-to-batch into a repeat-offender strike ledger (watch → timeout → ban decided in code; tempo alone never bans).",
   },
 ];
 

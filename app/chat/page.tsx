@@ -1,19 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CHAT_ACTIONS,
   CHAT_LEVELS,
   DEFAULT_GATES,
+  applyChatStrikes,
   buildChatCorpus,
   chatBadgeClass,
+  chatOffenderExportRows,
+  chatStrikeBadgeClass,
+  chatStrikeExportRows,
   type ChatAction,
   type ChatBatchItem,
   type ChatDecision,
   type ChatGates,
   type ChatOffenderRow,
   type ChatSignals,
+  type ChatStrikeLedger,
+  type ChatStrikeRow,
+  type ChatStrikeState,
 } from "@/lib/chat";
+import { ExportButtons } from "@/components/ExportButtons";
 import { ConfidenceBadge } from "@/components/charts/ConfidenceBadge";
 
 type ModerateResponse = {
@@ -44,6 +52,10 @@ type BatchResponse = {
 
 function ActionBadge({ action }: { action: ChatAction }) {
   return <span className={`badge ${chatBadgeClass(action)}`}>{action.toUpperCase()}</span>;
+}
+
+function StrikeBadge({ state }: { state: ChatStrikeState }) {
+  return <span className={`badge ${chatStrikeBadgeClass(state)}`}>{state.toUpperCase()}</span>;
 }
 
 function toxicityName(v: number): string {
@@ -102,6 +114,13 @@ export default function ChatPage() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
+
+  // The strike ledger RIDES FROM BATCH TO BATCH — mods act on users
+  // across scrolls, not per message. Escalation is folded in code
+  // (applyChatStrikes) from the accumulated holds/blocks/bursts.
+  const [strikeLedger, setStrikeLedger] = useState<ChatStrikeLedger | null>(null);
+  const strikePrev = useRef<ChatStrikeRow[]>([]);
+  const strikeSeen = useRef<Set<string>>(new Set());
 
   const corpus = buildChatCorpus();
 
@@ -167,6 +186,16 @@ export default function ChatPage() {
       if (!res.ok) throw new Error(data.error || "chat batch failed");
       setBatch(data);
       setBatchLimit(data.totals.moderated);
+      // Fold this scroll into the strike ledger — deduped by message
+      // id, so climbing 5 → 10 → All ADDS the new messages exactly
+      // once and re-running a rung never double-counts.
+      {
+        const fresh = data.items.filter((it) => !strikeSeen.current.has(it.id));
+        for (const it of data.items) strikeSeen.current.add(it.id);
+        const next = applyChatStrikes(strikePrev.current, fresh);
+        strikePrev.current = next.rows;
+        setStrikeLedger(next);
+      }
       setRaw((prev) =>
         JSON.stringify(
           {
@@ -196,8 +225,10 @@ export default function ChatPage() {
       <p className="subtitle">
         UC#9 · insults, spam &amp; spoilers out of the stream chat — toxicity (Score) +
         promo &amp; spoiler (Noul) decide allow / hold / block in CODE · 28-message
-        synthetic stream scroll, batch ladder 5 → 10 → All · per-user offender rollup,
-        because mods act on USERS not messages
+        synthetic stream scroll, batch ladder 5 → 10 → All · per-user offender rollup
+        exported through the D8 pipeline, folded batch-to-batch into a repeat-offender
+        strike ledger (watch → timeout → ban, escalation decided in code — tempo alone
+        never bans) because mods act on USERS not messages
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -345,10 +376,17 @@ export default function ChatPage() {
                 </div>
                 {batch.offenders.length > 0 && (
                   <div style={{ marginBottom: 12 }}>
-                    <strong style={{ fontSize: 13 }}>Per-user offender rollup</strong>
+                    <div className="row between" style={{ alignItems: "center" }}>
+                      <strong style={{ fontSize: 13 }}>Per-user offender rollup</strong>
+                      <ExportButtons
+                        filename={`chat-offenders-${batch.offenders.length}`}
+                        rows={chatOffenderExportRows(batch.offenders)}
+                      />
+                    </div>
                     <p className="muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>
                       timeout candidates decided in data — blocks dominate holds (score =
-                      blocks ×10 + holds), user as the final tiebreaker; clean chatgoers never appear
+                      blocks ×10 + holds), user as the final tiebreaker; clean chatgoers never appear;
+                      CSV/JSON export through the D8 pipeline
                     </p>
                     <table>
                       <thead>
@@ -370,6 +408,75 @@ export default function ChatPage() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+                {strikeLedger && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div className="row between" style={{ alignItems: "center" }}>
+                      <strong style={{ fontSize: 13 }}>Repeat-offender strike ledger · across batches</strong>
+                      <ExportButtons
+                        filename={`chat-strikes-${strikeLedger.rows.length}`}
+                        rows={chatStrikeExportRows(strikeLedger.rows)}
+                      />
+                    </div>
+                    <p className="muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>
+                      sustained-offender escalation decided IN CODE from the accumulated ledger
+                      (watch → timeout → ban): a block never gets walked back by a quiet scroll;
+                      bot tempo (a handle posting &gt;4 messages per fold) only ever feeds holds —
+                      <strong>the ban lane needs real blocks</strong>, because speed is suspicious,
+                      not attacking; errored messages excluded and counted ({strikeLedger.errors}{" "}
+                      in the last fold), never silently dropped
+                    </p>
+                    {strikeLedger.rows.length > 0 ? (
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>user</th>
+                            <th>holds</th>
+                            <th>blocks</th>
+                            <th>bursts</th>
+                            <th>score</th>
+                            <th>state</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {strikeLedger.rows.map((r) => (
+                            <tr key={r.user}>
+                              <td className="mono">{r.user}</td>
+                              <td className="mono">{r.holds}</td>
+                              <td className="mono">{r.blocks}</td>
+                              <td className="mono">{r.bursts}</td>
+                              <td className="mono">{r.score}</td>
+                              <td>
+                                <StrikeBadge state={r.state} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="muted" style={{ fontSize: 12 }}>
+                        nobody on the board — no handle has earned a hold or a block across{" "}
+                        {strikeLedger.folded} folded messages
+                      </p>
+                    )}
+                    <div className="row" style={{ gap: 10, marginTop: 8, alignItems: "center" }}>
+                      <button
+                        className="ghost"
+                        onClick={() => {
+                          // Amnesty is an EXPLICIT mod call, never a
+                          // side effect of quiet traffic.
+                          strikePrev.current = [];
+                          strikeSeen.current = new Set();
+                          setStrikeLedger(null);
+                        }}
+                      >
+                        Clear ledger (mod amnesty)
+                      </button>
+                      <span className="muted" style={{ fontSize: 11.5 }}>
+                        resets the accumulation; the ledger never resets itself
+                      </span>
+                    </div>
                   </div>
                 )}
                 {batch.items.map((it) => (
