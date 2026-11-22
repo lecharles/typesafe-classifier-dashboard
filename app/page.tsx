@@ -79,6 +79,12 @@ const cards = [
     title: "Live chat filter",
     body: "UC#9: Twitch-style chat moderation — insults, spam & spoilers out; toxicity (Score) + promo & spoiler (Noul) decide allow / hold / block in CODE (a friendly-voiced scam link is still spam; a spoiler never passes silently but is hidden, not punished), batched 5 → 10 → All over a 28-message stream scroll with a per-user offender rollup exported through the D8 pipeline, folded batch-to-batch into a repeat-offender strike ledger (watch → timeout → ban decided in code; tempo alone never bans).",
   },
+  {
+    href: "/entities",
+    num: "Level 14",
+    title: "Entity alignment / dedup",
+    body: "UC#10: are these two marketplace records the same product? similarity (Score) + conflict & generic-name (Noul) decide distinct / review / merge in CODE — merge is the destructive lane: a hard identifier contradiction forces the pair apart, a generic name never merges alone, doubt never enters the join lane; merge edges fold into contradiction-safe clusters (a chain never overrules a called separation), batched 5 → 10 → All over a 25-pair market audit with D8 CSV/JSON export.",
+  },
 ];
 
 export default function Home() {

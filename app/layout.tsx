@@ -21,6 +21,7 @@ const nav = [
   { href: "/bs", label: "BS detector" },
   { href: "/extract", label: "Extraction" },
   { href: "/chat", label: "Chat filter" },
+  { href: "/entities", label: "Entity dedup" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
