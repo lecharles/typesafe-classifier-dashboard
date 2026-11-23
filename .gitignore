@@ -8,3 +8,8 @@ out/
 .DS_Store
 dist/
 coverage/
+
+# SQLite results store (UC#10-persist spike) — server state, never in git
+data/*.db
+data/*.db-wal
+data/*.db-shm

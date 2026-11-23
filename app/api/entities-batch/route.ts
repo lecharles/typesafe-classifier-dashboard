@@ -1,11 +1,27 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { buildEntityCorpus, runEntityBatch, normalizeGates } from "@/lib/entities";
+import {
+  buildEntityCorpus,
+  runEntityBatch,
+  normalizeGates,
+  isEntityBatchReport,
+  entityRunSummary,
+  ENTITY_RUN_LANE,
+  type EntityBatchReport,
+} from "@/lib/entities";
 import { BATCH_LADDER } from "@/lib/dispatch";
 import { GatewayError } from "@/lib/gateway";
 import { JevError } from "@/lib/jev";
+import {
+  sharedResultsDb,
+  saveBatchRun,
+  loadLatestRun,
+  listRecentRuns,
+  countRuns,
+} from "@/lib/sqlite";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const recordSchema = z.object({
@@ -36,6 +52,14 @@ const gatesSchema = z
  * distinct / review / merge tallies + the contradiction-safe cluster
  * fold (merge edges union, a chain never overrules a called
  * separation, refused joins are LOGGED) ride in the report.
+ *
+ * UC#10-persist (11-24 row, the SQLite spike): every finished report
+ * is persisted server-side through lib/sqlite so a run SURVIVES A
+ * RESTART — the client re-reads the latest via GET on page load. The
+ * store refuses payloads its lane guard doesn't recognize, recomputes
+ * the summary in code, and a persistence failure rides the response
+ * visibly as `persistError` — the batch itself stays valid, the miss
+ * never goes silent.
  */
 const body = z
   .object({
@@ -62,6 +86,13 @@ const body = z
     { message: "limit must be a batch ladder rung (5, 10) or All" },
   );
 
+/** The ladder rung a run actually walked: null once it covers the whole corpus. */
+function effectiveRung(limit: number | null | undefined, corpusLen: number): number | null {
+  if (limit === null) return null;
+  const l = limit ?? BATCH_LADDER[0];
+  return l >= corpusLen ? null : l;
+}
+
 export async function POST(req: Request) {
   let raw: unknown;
   try {
@@ -80,11 +111,56 @@ export async function POST(req: Request) {
       limit: parsed.data.limit,
       gates: normalizeGates(parsed.data.gates),
     });
-    return NextResponse.json(report);
+    const persistedVia = effectiveRung(parsed.data.limit, corpus.length);
+
+    let persisted: { runId: string; savedAt: string; limit: number | null } | null = null;
+    let persistError: string | null = null;
+    try {
+      const db = sharedResultsDb();
+      const saved = saveBatchRun(db, {
+        lane: ENTITY_RUN_LANE,
+        payload: report,
+        guard: isEntityBatchReport,
+        summarize: entityRunSummary,
+        limit: persistedVia,
+      });
+      persisted = { runId: saved.runId, savedAt: saved.savedAt, limit: saved.limit };
+    } catch (err) {
+      // the run happened; the persistence miss rides the response visibly
+      persistError = err instanceof Error ? err.message : "results store failed";
+    }
+    return NextResponse.json({ ...report, persisted, persistError });
   } catch (err) {
     const status =
       err instanceof GatewayError || err instanceof JevError ? 502 : 500;
     const message = err instanceof Error ? err.message : "entity batch failed";
     return NextResponse.json({ error: message }, { status });
+  }
+}
+
+/**
+ * UC#10-persist GET: the store's memory outlives the process. Returns
+ * the newest VALID persisted run (full payload, so the page can
+ * restore it after a restart), slim summaries of the recent history,
+ * and the honest { total, readable } counts — corrupt rows show up as
+ * the gap, never as a quiet disappearance.
+ */
+export async function GET() {
+  try {
+    const db = sharedResultsDb();
+    const run = loadLatestRun<EntityBatchReport>(db, ENTITY_RUN_LANE, isEntityBatchReport);
+    const recent = listRecentRuns<EntityBatchReport>(db, ENTITY_RUN_LANE, isEntityBatchReport, 5).map(
+      (r) => ({
+        runId: r.runId,
+        savedAt: r.savedAt,
+        limit: r.limit,
+        summary: r.summary,
+      }),
+    );
+    const counts = countRuns(db, ENTITY_RUN_LANE, isEntityBatchReport);
+    return NextResponse.json({ run, recent, counts });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "results store read failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

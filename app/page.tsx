@@ -83,7 +83,7 @@ const cards = [
     href: "/entities",
     num: "Level 14",
     title: "Entity alignment / dedup",
-    body: "UC#10: are these two marketplace records the same product? similarity (Score) + conflict & generic-name (Noul) decide distinct / review / merge in CODE — merge is the destructive lane: a hard identifier contradiction forces the pair apart, a generic name never merges alone, doubt never enters the join lane; merge edges fold into contradiction-safe clusters (a chain never overrules a called separation), batched 5 → 10 → All over a 25-pair market audit with D8 CSV/JSON export.",
+    body: "UC#10: are these two marketplace records the same product? similarity (Score) + conflict & generic-name (Noul) decide distinct / review / merge in CODE — merge is the destructive lane: a hard identifier contradiction forces the pair apart, a generic name never merges alone, doubt never enters the join lane; merge edges fold into contradiction-safe clusters (a chain never overrules a called separation), batched 5 → 10 → All over a 25-pair market audit with D8 CSV/JSON export. SQLite spike: finished reports persist server-side — a run survives a restart and reloads itself, and the store never trusts a payload its shape guard does not recognize.",
   },
 ];
 

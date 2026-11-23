@@ -45,6 +45,26 @@ type BatchResponse = {
   model: string;
   provider: string;
   error?: string;
+  /** SQLite spike: the store's receipt for this run (null + persistError if it missed) */
+  persisted?: { runId: string; savedAt: string; limit: number | null } | null;
+  persistError?: string | null;
+};
+
+/** UC#10-persist: one server-persisted run, read back after a restart. */
+type StoredRunWire = {
+  runId: string;
+  lane: string;
+  savedAt: string;
+  limit: number | null;
+  summary: { compared: number; errors: number };
+  payload: BatchResponse;
+};
+
+type RunsResponse = {
+  run: StoredRunWire | null;
+  recent: { runId: string; savedAt: string; limit: number | null; summary: { compared: number; errors: number } }[];
+  counts: { total: number; readable: number };
+  error?: string;
 };
 
 function VerdictBadge({ verdict }: { verdict: EntityVerdict }) {
@@ -110,10 +130,40 @@ export default function EntitiesPage() {
   const [batchError, setBatchError] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
 
+  // UC#10-persist (SQLite spike): the server-persisted run restored on
+  // page load. The per-run store receipt rides the batch payload itself.
+  const [restored, setRestored] = useState<StoredRunWire | null>(null);
+  const [storeCounts, setStoreCounts] = useState<{ total: number; readable: number } | null>(null);
+
   const corpus = buildEntityCorpus();
 
   useEffect(() => {
     setDev(new URLSearchParams(window.location.search).get("dev") === "1");
+  }, []);
+
+  useEffect(() => {
+    // restore the newest persisted run from the server store — this is
+    // the spike's whole point: the report rides SQLite, not the browser.
+    let cancelled = false;
+    fetch("/api/entities-batch")
+      .then((res) => (res.ok ? (res.json() as Promise<RunsResponse>) : null))
+      .then((data) => {
+        if (cancelled || !data || data.error) return;
+        setStoreCounts(data.counts ?? null);
+        const run = data.run;
+        if (run && Array.isArray(run.payload?.items) && run.payload.items.length > 0) {
+          setBatch(run.payload);
+          setBatchLimit(run.limit ?? run.payload.totals.compared);
+          setRestored(run);
+        }
+      })
+      .catch(() => {
+        // a cold or broken store simply means nothing to restore —
+        // the page still boots clean (the GET endpoint owns the error).
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function runAlign() {
@@ -174,6 +224,10 @@ export default function EntitiesPage() {
       if (!res.ok) throw new Error(data.error || "entity batch failed");
       setBatch(data);
       setBatchLimit(data.totals.compared);
+      // this session's run replaces the restored one; the store receipt
+      // rides the batch payload visibly — a persistence miss is shown,
+      // never swallowed.
+      setRestored(null);
       setRaw((prev) =>
         JSON.stringify(
           {
@@ -206,10 +260,32 @@ export default function EntitiesPage() {
         audit, batch ladder 5 → 10 → All · merge is the <strong>destructive lane</strong>: a hard
         identifier contradiction forces a pair apart, a generic name can never merge on its own,
         and doubt never enters the join lane · merge edges then fold into contradiction-safe
-        clusters (a chain never overrules a called separation) exported through the D8 pipeline
+        clusters (a chain never overrules a called separation) exported through the D8 pipeline ·{" "}
+        <strong>SQLite spike</strong>: finished reports persist server-side, <strong>survive a
+        restart</strong>, and reload themselves — the store refuses any payload its shape guard
+        does not recognize
       </p>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {restored && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: "3px solid rgba(94,234,212,.45)" }}>
+          <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
+            <span style={{ fontSize: 13 }}>
+              <strong>Restored from SQLite</strong> — run <span className="mono">{restored.runId}</span>{" "}
+              (rung {restored.limit === null ? "All" : restored.limit} · {restored.summary.compared}{" "}
+              compared · {restored.summary.errors} errors) was persisted server-side at{" "}
+              <span className="mono">{restored.savedAt}</span> and <strong>survived the restart</strong>:
+              this board is the store&apos;s memory, not the browser&apos;s.
+            </span>
+            {storeCounts && storeCounts.total > 0 && (
+              <span className="muted mono" style={{ fontSize: 12 }}>
+                store: {storeCounts.readable}/{storeCounts.total} runs readable
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid cols-2" style={{ gap: 16, alignItems: "start" }}>
         <div>
@@ -377,7 +453,14 @@ export default function EntitiesPage() {
                     </span>{" "}
                     {batch.totals.errors > 0 && (
                       <span className="badge bad">{batch.totals.errors} errors</span>
-                    )}
+                    )}{" "}
+                    {batch.persisted ? (
+                      <span className="badge good" title={batch.persisted.runId}>
+                        persisted · SQLite
+                      </span>
+                    ) : batch.persistError ? (
+                      <span className="badge bad">persist failed: {batch.persistError}</span>
+                    ) : null}
                   </span>
                   <span className="muted mono" style={{ fontSize: 12 }}>
                     gates merge≥{batch.gates.mergeAt} distinct≤{batch.gates.distinctAt} · conflict{" "}

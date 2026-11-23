@@ -687,3 +687,129 @@ export function entityClusterExportRows(clusters: EntityCluster[]): ExportRow[] 
     edges: c.edges.join("|"),
   }));
 }
+
+/* ------------------------------------------------------------------ *
+ * SQLite persistence spike (11-24 row) — the lane's read/write guards.
+ *
+ * The store (lib/sqlite) is lane-agnostic; the TRUST lives here. A
+ * persisted report is only believed if it passes the exact shape the
+ * batch builder emits — and its summary must agree with its own items,
+ * so a hand-edited or truncated row can never masquerade as a run.
+ * ------------------------------------------------------------------ */
+
+/** The lane key this spike writes under in the shared results store. */
+export const ENTITY_RUN_LANE = "entities";
+
+const ENTITY_PROVIDER_SET = new Set<string>(["jev", "gateway"]);
+
+function isFiniteNum(x: unknown): x is number {
+  return typeof x === "number" && Number.isFinite(x);
+}
+
+function isStringArray(x: unknown): x is string[] {
+  return Array.isArray(x) && x.every((v) => typeof v === "string");
+}
+
+function isRecordShape(x: unknown): x is EntityRecord {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const r = x as Record<string, unknown>;
+  if (typeof r.id !== "string" || typeof r.name !== "string") return false;
+  for (const k of ["brand", "model", "detail"] as const) {
+    if (r[k] !== undefined && typeof r[k] !== "string") return false;
+  }
+  return true;
+}
+
+function isUsageShape(x: unknown): x is Usage {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const u = x as Record<string, unknown>;
+  return isFiniteNum(u.input_tokens) && isFiniteNum(u.output_tokens) &&
+    u.input_tokens >= 0 && u.output_tokens >= 0;
+}
+
+function isItemShape(x: unknown): x is EntityBatchItem {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const i = x as Record<string, unknown>;
+  if (typeof i.id !== "string" || typeof i.aId !== "string" || typeof i.bId !== "string") {
+    return false;
+  }
+  if (!isRecordShape(i.a) || !isRecordShape(i.b)) return false;
+  if (typeof i.error === "string") return true; // errored items carry only their failure
+  if (i.error !== undefined) return false;
+  if (typeof i.verdict !== "string" || !ENTITY_VERDICTS.includes(i.verdict as EntityVerdict)) {
+    return false;
+  }
+  const s = i.signals as Record<string, unknown> | undefined;
+  if (!s || !isFiniteNum(s.similarity) || !isFiniteNum(s.conflict) ||
+    !isFiniteNum(s.genericName) || !isFiniteNum(s.confidence)) {
+    return false;
+  }
+  if (!Array.isArray(i.reasons) || !i.reasons.every((r) => typeof r === "string")) return false;
+  return isUsageShape(i.usage);
+}
+
+/**
+ * Full shape + integrity guard for a persisted batch report. Beyond
+ * field types it enforces SELF-CONSISTENCY: totals.compared must equal
+ * the item count, totals.errors the errored items, and the verdict
+ * tally must sum to compared − errors. A report whose summary lies
+ * about its own items is unreadable, not negotiable.
+ */
+export function isEntityBatchReport(payload: unknown): payload is EntityBatchReport {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const p = payload as Record<string, unknown>;
+  if (!Array.isArray(p.items) || !p.items.every(isItemShape)) return false;
+  const items = p.items as EntityBatchItem[];
+
+  const t = p.totals as Record<string, unknown> | undefined;
+  if (!t || !isFiniteNum(t.compared) || !isFiniteNum(t.errors)) return false;
+  const v = t.verdicts as Record<string, unknown> | undefined;
+  if (!v || !ENTITY_VERDICTS.every((k) => isFiniteNum(v[k]))) return false;
+  if (!isUsageShape(t.usage)) return false;
+  // integrity: the summary must agree with its own items — a stored
+  // report that lies about its tally never reloads.
+  const errored = items.filter((i) => typeof i.error === "string").length;
+  if (t.compared !== items.length) return false;
+  if (t.errors !== errored) return false;
+  const tallied = ENTITY_VERDICTS.reduce((n, k) => n + (v[k] as number), 0);
+  if (tallied !== items.length - errored) return false;
+
+  if (!Array.isArray(p.clusters)) return false;
+  for (const c of p.clusters as unknown[]) {
+    const cc = c as Record<string, unknown>;
+    if (!cc || typeof cc.canonical !== "string" || !isStringArray(cc.members) ||
+      !isStringArray(cc.edges)) {
+      return false;
+    }
+  }
+  if (!Array.isArray(p.blocked)) return false;
+  for (const b of p.blocked as unknown[]) {
+    const bb = b as Record<string, unknown>;
+    if (!bb || typeof bb.pairId !== "string" || typeof bb.a !== "string" ||
+      typeof bb.b !== "string" || typeof bb.reason !== "string") {
+      return false;
+    }
+  }
+  const g = p.gates as Record<string, unknown> | undefined;
+  if (!g || !ENTITY_GATE_KEYS.every((k) => isFiniteNum(g[k]))) return false;
+  if (typeof p.model !== "string") return false;
+  if (typeof p.provider !== "string" || !ENTITY_PROVIDER_SET.has(p.provider)) return false;
+  return true;
+}
+
+const ENTITY_GATE_KEYS: (keyof EntityGates)[] = [
+  "mergeAt",
+  "distinctAt",
+  "conflictFloor",
+  "collisionCap",
+  "lowConfBump",
+];
+
+/** Recompute the run summary FROM THE ITEMS — the store's columns ride this, not the payload. */
+export function entityRunSummary(payload: unknown): { compared: number; errors: number } {
+  const p = payload as EntityBatchReport;
+  return {
+    compared: p.items.length,
+    errors: p.items.filter((i) => typeof i.error === "string").length,
+  };
+}
