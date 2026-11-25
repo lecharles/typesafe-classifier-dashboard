@@ -23,6 +23,7 @@ const nav = [
   { href: "/chat", label: "Chat filter" },
   { href: "/entities", label: "Entity dedup" },
   { href: "/upload", label: "Upload" },
+  { href: "/calibration", label: "Calibration" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

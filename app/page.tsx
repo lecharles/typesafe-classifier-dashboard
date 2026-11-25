@@ -91,6 +91,12 @@ const cards = [
     title: "Real-corpora upload",
     body: "Bring your OWN data in: paste or CSV/JSON files parsed in CODE — refused rows ride the receipt with row numbers, duplicates are dropped and counted, caps are visible — then screened through the UC#7 BS ladder, batch 5 → 10 → All, exported through D8 and persisted in SQLite. Live pulls ride official APIs only: https + exact-host allowlist + pinned path; with no key the lane refuses instead of pretending the synthetic sample is real — provenance never lies.",
   },
+  {
+    href: "/calibration",
+    num: "Level 16",
+    title: "Calibration view",
+    body: "Confidence vs correctness, decided in CODE: ten fixed 0.1-wide bins grade every stated confidence against the D14 harness's agreement column (agreement-as-correctness, labeled as such — a dead side is excluded and counted, never guessed at). Empty bins stay visible, ECE is weighted so one loud bin cannot drown forty quiet ones, gaps past the warn threshold earn a loud label, and snapshots persist in SQLite — the receipt survives the restart.",
+  },
 ];
 
 export default function Home() {
