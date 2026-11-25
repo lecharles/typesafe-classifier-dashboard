@@ -85,6 +85,12 @@ const cards = [
     title: "Entity alignment / dedup",
     body: "UC#10: are these two marketplace records the same product? similarity (Score) + conflict & generic-name (Noul) decide distinct / review / merge in CODE — merge is the destructive lane: a hard identifier contradiction forces the pair apart, a generic name never merges alone, doubt never enters the join lane; merge edges fold into contradiction-safe clusters (a chain never overrules a called separation), batched 5 → 10 → All over a 25-pair market audit with D8 CSV/JSON export. SQLite spike: finished reports persist server-side — a run survives a restart and reloads itself, and the store never trusts a payload its shape guard does not recognize.",
   },
+  {
+    href: "/upload",
+    num: "Level 15",
+    title: "Real-corpora upload",
+    body: "Bring your OWN data in: paste or CSV/JSON files parsed in CODE — refused rows ride the receipt with row numbers, duplicates are dropped and counted, caps are visible — then screened through the UC#7 BS ladder, batch 5 → 10 → All, exported through D8 and persisted in SQLite. Live pulls ride official APIs only: https + exact-host allowlist + pinned path; with no key the lane refuses instead of pretending the synthetic sample is real — provenance never lies.",
+  },
 ];
 
 export default function Home() {
