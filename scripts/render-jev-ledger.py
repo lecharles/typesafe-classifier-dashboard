@@ -26,6 +26,9 @@ for ln in lines:
         else:
             rows.append(cells)
 
+# render most-recent first; source markdown keeps the oldest-first train order
+rows.reverse()
+
 def link_commits(text: str) -> str:
     esc = html.escape(text)
     return re.sub(
