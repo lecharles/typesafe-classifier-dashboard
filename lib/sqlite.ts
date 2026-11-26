@@ -305,3 +305,64 @@ export function purgeLane(db: DatabaseSync, lane: string): number {
   const res = db.prepare("DELETE FROM batch_runs WHERE lane = ?").run(lane);
   return Number(res.changes);
 }
+
+/* ------------------------------------------------------------------ *
+ * Cross-lane scan (cost lane): the ledger prices WHATEVER is on disk.
+ * ------------------------------------------------------------------ */
+
+export type RawRunRow = {
+  lane: string;
+  runId: string;
+  savedAt: string;
+  /** parsed JSON — null when the row is corrupt (counted, never trusted) */
+  payload: unknown | null;
+};
+
+/**
+ * Newest-first rows across EVERY lane, capped. Deliberately guard-less:
+ * the CALLING lane's extractor decides what is a receipt, so a lane this
+ * file knows nothing about still reaches the ledger (or its honest
+ * skip). Corrupt payloads come back as payload: null — counted, never
+ * silently dropped.
+ */
+export function scanAllRuns(db: DatabaseSync, cap = 100): RawRunRow[] {
+  if (!Number.isInteger(cap)) {
+    throw new Error(`results: scan cap must be an integer, got ${String(cap)}`);
+  }
+  const n = Math.max(0, Math.min(cap, MAX_LIST_CAP));
+  if (n === 0) return [];
+  const rows = db
+    .prepare(
+      `SELECT lane, run_id, saved_at, payload FROM batch_runs
+       ORDER BY lane ASC, saved_at DESC, rowid DESC
+       LIMIT ?`,
+    )
+    .all(n) as unknown as { lane: string | null; run_id: string | null; saved_at: string | null; payload: string | null }[];
+  return rows.map((r) => {
+    let payload: unknown | null = null;
+    try {
+      payload = typeof r.payload === "string" ? JSON.parse(r.payload) : null;
+    } catch {
+      payload = null; // corrupt: the lane's extractor counts it as refused
+    }
+    return {
+      lane: String(r.lane ?? ""),
+      runId: String(r.run_id ?? ""),
+      savedAt: String(r.saved_at ?? ""),
+      payload,
+    };
+  });
+}
+
+/** What is on disk, lane by lane — the honest "before you price it" view. */
+export function laneSummaries(
+  db: DatabaseSync,
+): { lane: string; runs: number; newest: string }[] {
+  const rows = db
+    .prepare(
+      `SELECT lane, COUNT(*) AS n, MAX(saved_at) AS newest
+       FROM batch_runs GROUP BY lane ORDER BY lane ASC`,
+    )
+    .all() as unknown as { lane: string | null; n: number | bigint; newest: string | null }[];
+  return rows.map((r) => ({ lane: String(r.lane ?? ""), runs: Number(r.n ?? 0), newest: String(r.newest ?? "") }));
+}

@@ -97,6 +97,12 @@ const cards = [
     title: "Calibration view",
     body: "Confidence vs correctness, decided in CODE: ten fixed 0.1-wide bins grade every stated confidence against the D14 harness's agreement column (agreement-as-correctness, labeled as such — a dead side is excluded and counted, never guessed at). Empty bins stay visible, ECE is weighted so one loud bin cannot drown forty quiet ones, gaps past the warn threshold earn a loud label, and snapshots persist in SQLite — the receipt survives the restart.",
   },
+  {
+    href: "/cost",
+    num: "Level 17",
+    title: "Cost / token dashboard",
+    body: "Jev $/Mtok tracking, priced in CODE: the D14 harness books two receipts per run (Jev vs emulated, same states — a dead side is skipped and counted, never a $0 spend story), the SQLite store books finished batch runs off disk so a day's spend survives the restart, and manual receipts walk the never-trusts-a-payload intake. Effective $/Mtok is weighted (Σcost ÷ Σtokens), rates travel with every snapshot so history never re-prices itself, and a ledger that disagrees with its own receipts never reloads.",
+  },
 ];
 
 export default function Home() {
